@@ -1,7 +1,5 @@
 # AI Agent
 
-## To use 
-
 ## Creating an encrypted Ethereum key file
 
 ### Installing Geth
@@ -32,3 +30,29 @@ If no key_path is provided, the default path will be used: `./keyfile`
 ```python
 wallet = ZWallet(key_path='~/.ethereum/keystore/<keyfile>')
 ```
+
+Set your keyfile password in the `.env` file:
+```
+KEY_PASSWORD=<your_password>
+```
+
+You will also need to set the following environment variables:
+
+```
+RPC_URL
+OPENAI_API_KEY
+```
+
+## Running the agent
+
+```bash
+poetry install
+poetry run agent
+```
+
+## Capabilities
+
+- Receive tokens to the agent controlled wallet
+- Check wallet balance
+- Transfer tokens
+- Swap tokens on Uniswap V3
