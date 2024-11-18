@@ -1,0 +1,64 @@
+name: Python Project Structure Rules
+version: 1.0.0
+
+rules:
+  architecture:
+    - Each module must have an __init__.py file
+    - Core functionality in 'core' subdirectory
+    - Supporting components in dedicated subdirectories
+    - Main entry point in main.py
+
+  code_organization:
+    - One class per file
+    - File names in snake_case matching primary class name
+    - Class names in PascalCase
+    - Method names in snake_case
+    - Use ABC from abc module for abstract classes
+
+  imports:
+    - Use absolute imports (from mypackage.submodule.module import Class)
+    - Export public interfaces in __init__.py
+    - Group: standard library, third-party, local
+    - No circular dependencies
+
+  type_hints:
+    - Type hints required for all parameters and returns
+    - Use Optional[] for nullable parameters
+    - Use typed collections (List, Dict, Set)
+
+  documentation:
+    - Class docstrings required
+    - Public method docstrings required
+    - Use """triple quotes"""
+    - Include parameter descriptions
+
+  error_handling:
+    - Use explicit exception handling
+    - Custom exceptions for domain-specific errors
+
+  testing:
+    - Test files named test_*.py
+    - Use pytest
+    - Maintain high coverage
+
+  clean_code:
+    - Single responsibility principle
+    - 4 spaces indentation
+    - No deep nesting
+
+naming_conventions:
+  files: snake_case
+  classes: PascalCase
+  methods: snake_case
+  variables: snake_case
+  constants: UPPER_SNAKE_CASE
+  private_members: _leading_underscore
+
+folder_structure:
+  src:
+    - core/
+    - factories/
+    - observers/
+    - utils/
+    - main.py
+    - __init__.py 
