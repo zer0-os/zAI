@@ -137,6 +137,10 @@ class UniswapAdapter(BaseAdapter):
                 token_out_address
             )
 
+            # Track both tokens
+            self._wallet._tracked_tokens.add(token_in_address)
+            self._wallet._tracked_tokens.add(token_out_address)
+
             # Get token decimals and convert amount to Wei
             token_in = common_contracts.get_contract("erc20", token_in_address)
             decimals = await token_in.functions.decimals().call()

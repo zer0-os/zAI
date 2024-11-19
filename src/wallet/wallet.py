@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 from abc import ABC, abstractmethod
 from eth_account import Account
 from web3 import AsyncWeb3
@@ -30,13 +30,19 @@ class ZWallet:
         """
         rpc_url = os.getenv("RPC_URL")
         assert rpc_url, "RPC_URL is not set"
-        self._web3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(rpc_url))
-        private_key = self.load_private_key(key_path if key_path else "./keyfile")
-        self._account = (
-            None if not private_key else self._web3.eth.account.from_key(private_key)
-        )
+        hardhat_private_key = os.getenv("HARDHAT_PRIVATE_KEY")
+        if hardhat_private_key:
+            self._account = self._web3.eth.account.from_key(hardhat_private_key)
+        else:
+            private_key = self.load_private_key(key_path if key_path else "./keyfile")
+            self._account = (
+                None
+                if not private_key
+                else self._web3.eth.account.from_key(private_key)
+            )
         self._adapter_registry = AdapterRegistry()
         common_contracts.initialize(self._web3)
+        self._tracked_tokens: Set[str] = set()
 
     def load_private_key(self, key_path):
         with open(key_path) as keyfile:
@@ -166,27 +172,38 @@ class ZWallet:
 
         # Get ETH balance
         try:
-            eth_balance = await self._web3.eth.get_balance(self._account.address)
+            eth_balance_wei = await self._web3.eth.get_balance(self._account.address)
+            eth_balance = self._web3.from_wei(eth_balance_wei, "ether")
         except Exception as e:
             raise WalletError(f"Failed to fetch ETH balance: {str(e)}")
 
-        # Get token balances
-        payload = {
-            "id": 1,
-            "jsonrpc": "2.0",
-            "method": "alchemy_getTokenBalances",
-            "params": [self._account.address, token_type],
+        # Get tracked token balances
+        token_balances = {}
+        for token_address in self._tracked_tokens:
+            try:
+                token_contract = common_contracts.get_contract("erc20", token_address)
+                raw_balance = await token_contract.functions.balanceOf(
+                    self._account.address
+                ).call()
+                # Get token symbol and decimals
+                symbol = await token_contract.functions.symbol().call()
+                decimals = await token_contract.functions.decimals().call()
+                # Convert raw balance to token amount
+                token_balance = Decimal(raw_balance) / Decimal(10**decimals)
+                token_balances[symbol] = str(token_balance)
+            except Exception as e:
+                raise WalletError(
+                    f"Failed to fetch balance for token {token_address}: {str(e)}"
+                )
+
+        return {
+            "description": "Wallet balances should be displayed in a table or list",
+            "balances": {
+                "ETH": str(eth_balance),
+                **token_balances,
+            },
         }
 
-        try:
-            token_response = await self._web3.provider.make_request(
-                method=payload["method"], params=payload["params"]
-            )
-
-            # Combine ETH and token balances
-            return {
-                "eth_balance": eth_balance,
-                "token_balances": token_response.get("result", {}),
-            }
-        except Exception as e:
-            raise WalletError(f"Failed to fetch token balances: {str(e)}")
+    def get_tracked_tokens(self) -> List[str]:
+        """Returns list of tracked token addresses"""
+        return list(self._tracked_tokens)

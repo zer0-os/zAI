@@ -27,17 +27,19 @@ class ContractRegistry(ABC):
 
     def get_contract(self, name: str, address: Optional[str] = None) -> Any:
         """Get or create a contract instance"""
-        if name not in self._instances:
-            if name not in self._configs:
+        cache_key = f"{name}_{address}" if address else name
+
+        if cache_key not in self._instances:
+            if name not in self._configs and not address:
                 raise KeyError(f"Contract configuration not found: {name}")
             if not self._web3:
                 raise RuntimeError("Registry not initialized with Web3 instance")
 
             config = self._configs[name]
-            self._instances[name] = self._web3.eth.contract(
+            self._instances[cache_key] = self._web3.eth.contract(
                 address=config.address if address is None else address, abi=config.abi
             )
-        return self._instances[name]
+        return self._instances[cache_key]
 
     def get_abi(self, name: str) -> Dict[str, Any]:
         """Get ABI by name"""

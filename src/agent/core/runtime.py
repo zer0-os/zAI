@@ -92,16 +92,27 @@ class Runtime(ABC):
                 self._logger.debug(message)
 
     async def process_message(self, message: str) -> str:
-        """Process a user message"""
-        self._generate_count = 0
-        self._debug_log("Processing user message", message)
+        """Process a user message and return the response
 
-        self._message_manager.add_message(message, "user")
+        Args:
+            message: The user's input message
 
-        response = await self.generate()
+        Returns:
+            str: The agent's response
+        """
+        try:
+            self._generate_count = 0
+            self._debug_log("Processing user message", message)
 
-        self._message_manager.add_message(response, "assistant")
-        return response
+            self._message_manager.add_message(message, "user")
+            response = await self.generate()
+            self._message_manager.add_message(response, "assistant")
+
+            return response
+
+        except Exception as e:
+            self._debug_log("Error processing message", str(e))
+            return f"An error occurred: {str(e)}"
 
     async def generate(self) -> str:
         """Generate a response from the model"""
