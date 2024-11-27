@@ -1,80 +1,90 @@
 from abc import ABC
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 import json
 import logging
+from agent.agents import WalletAgent
 from agent.core.providers import OpenAIProvider
 from agent.core.memory.message_manager import MessageManager
 from wallet.wallet import ZWallet
+from agent.core.base_agent import BaseAgent
+from agent.core.decorators.tool import ToolMetadata
 
 
 class Runtime(ABC):
-    """Base runtime configuration and initialization"""
+    """Multi-agent runtime configuration and initialization"""
 
     def __init__(self, wallet: ZWallet, debug: bool = False) -> None:
-        # Initialize debug logging first
+        """Initialize the runtime with multiple agents
+
+        Args:
+            wallet: Wallet instance for blockchain interactions
+            agents: List of agent classes to instantiate
+            debug: Enable debug logging if True
+        """
         self._debug = debug
         self._logger = None
         if debug:
             logging.basicConfig(level=logging.DEBUG)
             self._logger = logging.getLogger(__name__)
-        self._generate_count = 0
 
-        # Initialize components with debug log method
+        self._system_prompt = """You are a routing agent that directs user requests to specialized agents.
+        Analyze each user message and determine which agent would be best suited to handle it."""
+        self._generate_count = 0
         self._wallet = wallet
         self._model_provider = OpenAIProvider(debug_log=self._debug_log)
         self._message_manager = MessageManager()
 
-        # Get wallet capabilities and register tools
-        self._tools = self._get_wallet_tools()
+        # Initialize all agents
+        wallet_agent = WalletAgent(
+            wallet, message_manager=self._message_manager, debug=debug
+        )
+        self._agents = [wallet_agent]
 
-        # Add system message with capabilities
-        system_message = "You are an ai agent that can interact with a wallet. Take onchain actions as directed by the user"
-        self._message_manager.add_message(system_message, "system")
+        # Initialize transfer tools list
+        self._tools = []
+        for agent in self._agents:
+            for method_name in dir(agent):
+                if method_name.startswith("transfer_to"):
+                    method = getattr(agent, method_name)
+                    if hasattr(method, "tool_metadata"):
+                        metadata: ToolMetadata = method.tool_metadata
+                        self._tools.append(metadata.description)
 
-    def _get_wallet_tools(self) -> List[Dict[str, Any]]:
-        """Extract tool descriptions from wallet methods and adapters"""
-        tools = []
+        self._current_agent: Optional[BaseAgent] = None
 
-        # Get base wallet tools
-        for method_name in dir(self._wallet):
-            method = getattr(self._wallet, method_name)
-            if hasattr(method, "tool_metadata"):
-                # Only use the OpenAI-compatible description
-                tools.append(method.tool_metadata.description)
+    async def _execute_tool(self, tool_call: Dict[str, Any]) -> str | BaseAgent:
+        """Execute a tool call by finding the appropriate agent and method
 
-        # Get adapter tools using the adapter registry
-        adapter_registry = self._wallet._adapter_registry
-        for adapter in adapter_registry._adapters.values():
-            for method_name in dir(adapter):
-                method = getattr(adapter, method_name)
-                if hasattr(method, "tool_metadata"):
-                    tools.append(method.tool_metadata.description)
-
-        return tools
-
-    async def _execute_tool(self, tool_call: Dict[str, Any]) -> str:
-        """Execute a tool call and return the result"""
+        Returns:
+            Union[str, BaseAgent]: Either a JSON serialized result string or a BaseAgent instance
+        """
         try:
             method_name = tool_call["function"]["name"]
-            method = None
-            namespace = None
-
-            # First check wallet methods
-            if hasattr(self._wallet, method_name):
-                method = getattr(self._wallet, method_name)
-            else:
-                # Check adapters
-                for adapter in self._wallet.get_adapters():
-                    if hasattr(adapter, method_name):
-                        method = getattr(adapter, method_name)
-                        if hasattr(method, "tool_metadata"):
-                            namespace = method.tool_metadata.namespace
-                            break
-
-            adapter = self._wallet.get_adapter(namespace) if namespace else self._wallet
             args = json.loads(tool_call["function"]["arguments"])
-            result = await method(**args)
-            return json.dumps(result)
+
+            # First check for methods on Runtime class itself
+            if hasattr(self, method_name):
+                method = getattr(self, method_name)
+                if hasattr(method, "tool_metadata"):
+                    result = await method(**args)
+                    # Special case for agent transfers
+                    if isinstance(result, BaseAgent):
+                        return result
+                    return result
+
+            # Then search through agents for the matching tool
+            for agent in self._agents:
+                if hasattr(agent, method_name):
+                    method = getattr(agent, method_name)
+                    if hasattr(method, "tool_metadata"):
+                        result = await method(**args)
+                        # Special case for agent transfers
+                        if isinstance(result, BaseAgent):
+                            return result
+                        return result
+
+            raise ValueError(f"No agent found with tool method: {method_name}")
+
         except Exception as e:
             return f"Error executing tool: {str(e)}"
 
@@ -92,17 +102,10 @@ class Runtime(ABC):
                 self._logger.debug(message)
 
     async def process_message(self, message: str) -> str:
-        """Process a user message and return the response
-
-        Args:
-            message: The user's input message
-
-        Returns:
-            str: The agent's response
-        """
+        """Process a user message by routing it to the appropriate agent"""
         try:
-            self._generate_count = 0
             self._debug_log("Processing user message", message)
+            self._current_agent = None  # Reset agent on new message
 
             self._message_manager.add_message(message, "user")
             response = await self.generate()
@@ -115,22 +118,62 @@ class Runtime(ABC):
             return f"An error occurred: {str(e)}"
 
     async def generate(self) -> str:
-        """Generate a response from the model"""
-        self._generate_count += 1
-        messages = self._message_manager.get_messages()
+        """Generate a response from the model
 
-        if self._generate_count > 3:
-            return "I'm sorry, I'm having trouble processing your request. Please try again later."
+        Returns:
+            str: The final response after potentially multiple generations and tool calls
+        """
+        generation_count = 0
 
-        response = await self._model_provider.generate(
-            messages=messages, tools=self._tools
-        )
+        while generation_count < 3:
+            generation_count += 1
+            self._debug_log(f"Generation attempt {generation_count}")
 
-        # Handle tool calls if present
-        if "tool_calls" in response:
+            # Use current agent's generate if set, otherwise use model provider
+            if self._current_agent:
+                response = await self._current_agent.generate()
+            else:
+                response = await self.model_generate()
+
+            # If no tool calls, we have our final response
+            if "tool_calls" not in response:
+                return response["content"]
+
+            # Handle tool calls
             self._debug_log("Tool calls detected", response["tool_calls"])
+
+            # Add the assistant's response with tool calls first
+            self._message_manager.add_message(
+                response["content"], "assistant", tool_calls=response["tool_calls"]
+            )
+
+            # Then process each tool call
             for tool_call in response["tool_calls"]:
                 result = await self._execute_tool(tool_call)
-                self._message_manager.add_message(result, "assistant")
+                if isinstance(result, BaseAgent):
+                    self._current_agent = result
+                    generation_count = 0  # Reset count when switching to new agent
+                    self._debug_log(
+                        "Switching to new agent, resetting generation count"
+                    )
+                    result = f"Transferring to {result.name}"
 
-        return await self._model_provider.generate(messages)
+                self._message_manager.add_message(
+                    result, "tool", tool_id=tool_call["id"]
+                )
+
+        return "I'm sorry, I'm having trouble processing your request. Please try again later."
+
+    async def model_generate(self) -> str:
+        """Generate a response using the model provider
+
+        Returns:
+            str: Generated response
+        """
+        messages = self._message_manager.get_messages()
+        tools = self._tools
+
+        system_message = {"role": "system", "content": self._system_prompt}
+        return await self._model_provider.generate(
+            messages=[system_message] + messages, tools=tools
+        )

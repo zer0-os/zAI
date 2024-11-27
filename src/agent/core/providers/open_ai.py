@@ -84,14 +84,7 @@ class OpenAIProvider(ModelProvider):
             response.raise_for_status()
             response_data = response.json()
             message = response_data["choices"][0]["message"]
-            content = message["content"]
-
-            # Check if the response contains tool calls
-            if "tool_calls" in message:
-                return message
-
-            # Otherwise return just the content
-            return content
+            return message
 
         except requests.exceptions.RequestException as e:
             raise OpenAIAPIError(f"OpenAI API request failed: {str(e)}") from e

@@ -9,7 +9,12 @@ class MessageManager:
         self._messages: List[Dict] = []
 
     def add_message(
-        self, content: str, role: str, timestamp: Optional[datetime] = None
+        self,
+        content: str,
+        role: str,
+        tool_calls: Optional[List[Dict]] = None,
+        tool_id: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
     ) -> None:
         """
         Add a new message to the history
@@ -23,6 +28,8 @@ class MessageManager:
             {
                 "content": content,
                 "role": role,
+                "tool_calls": tool_calls,
+                "tool_call_id": tool_id,
                 "timestamp": (timestamp or datetime.now()).isoformat(),
             }
         )

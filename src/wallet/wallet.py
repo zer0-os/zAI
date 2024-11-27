@@ -30,6 +30,7 @@ class ZWallet:
         """
         rpc_url = os.getenv("RPC_URL")
         assert rpc_url, "RPC_URL is not set"
+        self._web3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(rpc_url))
         hardhat_private_key = os.getenv("HARDHAT_PRIVATE_KEY")
         if hardhat_private_key:
             self._account = self._web3.eth.account.from_key(hardhat_private_key)
@@ -196,13 +197,14 @@ class ZWallet:
                     f"Failed to fetch balance for token {token_address}: {str(e)}"
                 )
 
-        return {
-            "description": "Wallet balances should be displayed in a table or list",
-            "balances": {
-                "ETH": str(eth_balance),
-                **token_balances,
-            },
+        balances = {
+            "ETH": str(eth_balance),
+            **token_balances,
         }
+        return f"""
+            Display the following wallet balances in a bulleted list using markdown
+            {balances}
+        """
 
     def get_tracked_tokens(self) -> List[str]:
         """Returns list of tracked token addresses"""
