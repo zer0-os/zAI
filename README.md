@@ -1,8 +1,19 @@
-# AI Agent
+# zAI Agent
+
+
+## Developing locally (Mainnet Fork)
+
+In a separate terminal, use hardhat to run a local fork of Ethereum
+```bash
+npx hardhat node --fork {RPC_URL}
+```
+Enter the hardhat private key in the `.env` file:
+```
+HARDHAT_PRIVATE_KEY=<your_private_key>
+```
 
 ## Creating an encrypted Ethereum key file
-
-### Installing Geth
+### Using Geth Private Key
 
 First, install Geth (Go Ethereum) using the following commands:
 ```bash

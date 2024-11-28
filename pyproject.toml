@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "ai-agent"
+name = "zAI"
 version = "0.1.0"
-description = "A CLI interface for a general purpose AI agent"
+description = "Zero AI Agent framework"
 authors = ["Ricky Roller travelingroller@gmail.com"]
 readme = "README.md"
 packages = [
