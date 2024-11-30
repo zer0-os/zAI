@@ -7,6 +7,7 @@ from agent.core.providers.open_ai import OpenAIProvider
 from agent.core.decorators.tool import agent_tool
 from wallet.wallet import ZWallet
 from agent.core.decorators.agent import agent
+from agent.core.interfaces.message_stream import MessageStream
 
 
 @agent
@@ -24,26 +25,29 @@ class WalletAgent(BaseAgent):
         self,
         wallet: ZWallet,
         message_manager: MessageManager,
+        message_stream: MessageStream,
         debug: bool = False,
     ) -> None:
         """Initialize the wallet agent
 
         Args:
             wallet: Wallet instance for blockchain interactions
-            model_provider: Provider for model interactions
             message_manager: Manager for conversation history
+            message_stream: Stream for sending/receiving messages
             debug: Enable debug logging if True
         """
-        model_provider = OpenAIProvider(debug_log=debug)
+        self._wallet = wallet
+        model_provider = OpenAIProvider(debug=debug)
         super().__init__(
-            wallet=wallet,
             model_provider=model_provider,
             message_manager=message_manager,
+            message_stream=message_stream,
             debug=debug,
         )
 
     def get_system_prompt(self) -> str | None:
-        return "You are a wallet agent that can perform operations on a wallet."
+        return """You are a wallet agent that can perform operations on a wallet.
+        You must use the tools provided when responding."""
 
     async def transfer_to(self) -> "BaseAgent":
         """Transfer control to the wallet agent for handling wallet operations
@@ -81,6 +85,7 @@ class WalletAgent(BaseAgent):
         Returns:
             str: The transaction hash
         """
+
         return await self._wallet.transfer(
             token_address=token_address, to_address=to_address, amount=amount
         )

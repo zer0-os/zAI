@@ -1,8 +1,10 @@
 import asyncio
 import argparse
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from agent.core.runtime import Runtime
-from agent.core.agent_interface.interface import clear_screen, chat_loop
+from agent.core.streams.websocket_stream import WebSocketStream
+from agent.core.streams.console_stream import ConsoleStream
+from agent.core.agent_interface.interface import clear_screen
 from wallet.wallet import ZWallet
 from wallet.adapters.uniswap import UniswapAdapter
 from fastapi.staticfiles import StaticFiles
@@ -25,13 +27,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def initialize_agent(debug: bool = False) -> Runtime:
-    """Initialize the agent with configuration"""
+def initialize_wallet(debug: bool = False) -> ZWallet:
+    """Initialize the wallet with adapters"""
     wallet = ZWallet()
     wallet.add_adapter(UniswapAdapter(wallet))
-
-    runtime = Runtime(wallet, debug)
-    return runtime
+    return wallet
 
 
 app = FastAPI()
@@ -53,17 +53,37 @@ async def get():
 @app.websocket("/chat")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    agent = initialize_agent(debug=False)
+
+    # Initialize components
+    wallet = initialize_wallet()
+    stream = WebSocketStream(websocket)
+    runtime = Runtime(wallet=wallet, message_stream=stream, debug=app.state.debug)
 
     try:
         while True:
-            message = await websocket.receive_text()
-            response = await agent.process_message(message)
-            await websocket.send_text(response)
+            message = await stream.receive_message()
+            await runtime.process_message(message)
+    except WebSocketDisconnect:
+        print("Client disconnected")
     except Exception as e:
-        await websocket.send_text(f"Error: {str(e)}")
+        try:
+            await stream.send_message(f"Error: {str(e)}")
+        except:
+            pass
     finally:
         await websocket.close()
+
+
+async def chat_loop(runtime: Runtime, stream: ConsoleStream) -> None:
+    """Run the chat loop for console interaction"""
+    while True:
+        try:
+            message = await stream.receive_message()
+            await runtime.process_message(message)
+        except (KeyboardInterrupt, EOFError):
+            break
+        except Exception as e:
+            await stream.send_message(f"Error: {str(e)}")
 
 
 def main() -> None:
@@ -72,11 +92,15 @@ def main() -> None:
     if args.web:
         import uvicorn
 
+        app.state.debug = args.debug
         uvicorn.run(app, host="0.0.0.0", port=args.port)
     else:
-        agent = initialize_agent(args.debug)
+        wallet = initialize_wallet(args.debug)
+        stream = ConsoleStream()
+        runtime = Runtime(wallet=wallet, message_stream=stream, debug=args.debug)
+
         clear_screen()
-        asyncio.run(chat_loop(agent))
+        asyncio.run(chat_loop(runtime, stream))
 
 
 if __name__ == "__main__":

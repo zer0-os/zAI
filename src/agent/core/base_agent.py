@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+import json
+from typing import List, Dict, Any, Optional, Union, AsyncGenerator
 import logging
 from agent.core.memory.message_manager import MessageManager
 from agent.core.providers.model_provider import ModelProvider
 from agent.core.decorators.tool import ToolMetadata
 from wallet.wallet import ZWallet
+from agent.core.interfaces.message_stream import MessageStream
 
 
 class BaseAgent(ABC):
@@ -22,17 +24,17 @@ class BaseAgent(ABC):
 
     def __init__(
         self,
-        wallet: ZWallet,
         model_provider: ModelProvider,
         message_manager: MessageManager,
+        message_stream: MessageStream,
         debug: bool = False,
     ) -> None:
         """Initialize the base agent
 
         Args:
-            wallet: Wallet instance for blockchain interactions
             model_provider: Provider for model interactions (e.g., OpenAIProvider)
             message_manager: Manager for conversation history
+            message_stream: Stream for sending/receiving messages
             debug: Enable debug logging if True
         """
         self._debug = debug
@@ -40,9 +42,9 @@ class BaseAgent(ABC):
         if debug:
             self._logger = logging.getLogger(__name__)
 
-        self._wallet = wallet
         self._model_provider = model_provider
         self._message_manager = message_manager
+        self._message_stream = message_stream
 
     @abstractmethod
     def get_system_prompt(self) -> Optional[str]:
@@ -67,7 +69,8 @@ class BaseAgent(ABC):
         pass
 
     def _get_tools(self) -> List[Dict[str, Any]]:
-        """Get all tools available to this agent
+        """Get all tools available to this agent. This method can be overridden by subclasses
+        to provide custom tool discovery logic.
 
         Returns:
             List[Dict[str, Any]]: List of tool descriptions
@@ -97,35 +100,14 @@ class BaseAgent(ABC):
             else:
                 self._logger.debug(message)
 
-    async def process_message(self, message: str) -> str:
-        """Process a user message and return the response
-
-        Args:
-            message: The user's input message
-
-        Returns:
-            str: The agent's response
-        """
-        try:
-            self._debug_log("Processing message in agent", message)
-            self._message_manager.add_message(message, "user")
-            response = await self.generate()
-            self._message_manager.add_message(response, "assistant")
-            return response
-        except Exception as e:
-            self._debug_log("Error processing message", str(e))
-            return f"An error occurred: {str(e)}"
-
-    async def generate(self) -> str:
-        """Generate a response using the model provider
-
-        Returns:
-            str: Generated response
-        """
+    async def generate(self) -> AsyncGenerator[str, None]:
+        """Generate a response using the model provider"""
         messages = self._message_manager.get_messages()
         tools = self._get_tools()
-
         system_message = {"role": "system", "content": self.get_system_prompt()}
-        return await self._model_provider.generate(
-            messages=[system_message] + messages, tools=tools
+
+        response = await self._model_provider.generate(
+            messages=[system_message] + messages, tools=tools, stream=True
         )
+        async for chunk in response:
+            yield chunk

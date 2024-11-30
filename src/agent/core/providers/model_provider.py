@@ -1,9 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Union
+import logging
+from typing import AsyncGenerator, Dict, Any, List, Optional, Union
 
 
 class ModelProvider(ABC):
     """Abstract base class for AI model providers"""
+
+    def __init__(self, debug: bool = False):
+        self._logger = None
+        if debug:
+            self._logger = logging.getLogger(__name__)
+
+    def _debug_log(self, message: str, *args: Any):
+        if self._logger:
+            self._logger.debug(message, *args)
 
     @abstractmethod
     def generate(
@@ -11,7 +21,7 @@ class ModelProvider(ABC):
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         **kwargs: Any
-    ) -> Union[str, Dict[str, Any]]:
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Generate text from the model
 
