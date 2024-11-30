@@ -1,7 +1,6 @@
-from typing import Dict, Any, List, Optional, Union, Callable, AsyncGenerator
+from typing import Dict, Any, List, Optional, Union, AsyncGenerator
 import aiohttp
 import json
-from deepmerge import always_merger
 from agent.core.providers.model_provider import ModelProvider
 import os
 from dotenv import load_dotenv
