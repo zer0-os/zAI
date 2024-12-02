@@ -2,6 +2,7 @@ from abc import ABC
 from typing import Dict, Any, Optional, Union, AsyncGenerator
 import json
 import logging
+import shortuuid
 from agent.agents import WalletAgent
 from agent.agents.routing_agent import RoutingAgent
 from agent.core.providers import OpenAIProvider
@@ -102,12 +103,14 @@ class Runtime(ABC):
             self._message_manager.add_message(message, "user")
 
             complete_response = ""
+            message_id = shortuuid.uuid()
             async for chunk in self.agent_loop():
                 await self._message_stream.send_partial(
                     json.dumps(
                         {
-                            "id": len(self._message_manager.get_messages()),
-                            "c": chunk,
+                            "type": "stream",
+                            "id": message_id,
+                            "chunk": chunk,
                         }
                     )
                 )
@@ -120,7 +123,9 @@ class Runtime(ABC):
         except Exception as e:
             self._debug_log("Error processing message", str(e))
             error_msg = f"An error occurred: {str(e)}"
-            await self._message_stream.send_message(error_msg)
+            await self._message_stream.send_message(
+                json.dumps({"type": "error", "error": error_msg})
+            )
             return error_msg
 
     async def agent_loop(self) -> AsyncGenerator[str, None]:
@@ -155,7 +160,7 @@ class Runtime(ABC):
                             self._debug_log(
                                 "Switching to new agent, resetting generation count"
                             )
-                            result = f"Transferring to {result.name}"
+                            result = f"Transferring to {result.name}. You may continue."
 
                         self._message_manager.add_message(
                             result, "tool", tool_id=tool_call["id"]

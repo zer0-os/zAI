@@ -1,5 +1,6 @@
 import asyncio
 import argparse
+import tracemalloc
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from agent.core.runtime import Runtime
 from agent.core.streams.websocket_stream import WebSocketStream
@@ -7,9 +8,7 @@ from agent.core.streams.console_stream import ConsoleStream
 from agent.core.agent_interface.interface import clear_screen
 from wallet.wallet import ZWallet
 from wallet.adapters.uniswap import UniswapAdapter
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-import os
+from core.websocket.connection_manager import ConnectionManager
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,33 +35,38 @@ def initialize_wallet(debug: bool = False) -> ZWallet:
 
 app = FastAPI()
 
-# Get the directory containing main.py
-current_dir = os.path.dirname(os.path.abspath(__file__))
-static_dir = os.path.join(current_dir, "static")
-
-# Mount the static directory
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-
-@app.get("/")
-async def get():
-    """Serve the index.html file"""
-    return FileResponse(os.path.join(static_dir, "index.html"))
+# Initialize connection manager
+connection_manager = ConnectionManager()
 
 
 @app.websocket("/chat")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
+    # Start memory tracking
+    tracemalloc.start()
+    snapshot_start = tracemalloc.take_snapshot()
+
+    # Try to establish connection
+    if not await connection_manager.connect(websocket):
+        return
 
     # Initialize components
     wallet = initialize_wallet()
     stream = WebSocketStream(websocket)
     runtime = Runtime(wallet=wallet, message_stream=stream, debug=app.state.debug)
 
+    # Start heartbeat task
+    heartbeat_task = asyncio.create_task(connection_manager.send_heartbeat(websocket))
+
     try:
         while True:
             message = await stream.receive_message()
             await runtime.process_message(message)
+
+            # Take memory snapshot and log usage
+            snapshot = tracemalloc.take_snapshot()
+            top_stats = snapshot.compare_to(snapshot_start, "lineno")
+            print(f"Memory usage: {top_stats[0].size / 1024 / 1024:.2f} MB")
+
     except WebSocketDisconnect:
         print("Client disconnected")
     except Exception as e:
@@ -71,7 +75,10 @@ async def websocket_endpoint(websocket: WebSocket):
         except:
             pass
     finally:
+        connection_manager.disconnect(websocket)
+        heartbeat_task.cancel()
         await websocket.close()
+        tracemalloc.stop()
 
 
 async def chat_loop(runtime: Runtime, stream: ConsoleStream) -> None:

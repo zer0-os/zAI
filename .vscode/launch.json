@@ -5,7 +5,7 @@
       "name": "Python: Agent",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/src/agent/main.py",
+      "program": "${workspaceFolder}/src/main.py",
       "args": ["--web", "--port", "8000"],
       "console": "integratedTerminal",
       "justMyCode": true,

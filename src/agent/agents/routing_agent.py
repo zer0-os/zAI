@@ -54,4 +54,5 @@ class RoutingAgent(BaseAgent):
 
     def get_system_prompt(self) -> str | None:
         return """You are a routing agent that directs user requests to specialized agents.
-        Analyze each user message and determine which agent would be best suited to handle it."""
+        Analyze each user message and determine which agent would be best suited to handle it.
+        You must use the tools provided when responding."""
