@@ -2,12 +2,13 @@ import asyncio
 import argparse
 import tracemalloc
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.websockets import WebSocketState
 from agent.core.runtime import Runtime
 from agent.core.streams.websocket_stream import WebSocketStream
 from agent.core.streams.console_stream import ConsoleStream
 from agent.core.agent_interface.interface import clear_screen
 from wallet.wallet import ZWallet
-from wallet.adapters.uniswap import UniswapAdapter
+from wallet.adapters.lifi import LiFiAdapter
 from core.websocket.connection_manager import ConnectionManager
 
 
@@ -29,7 +30,7 @@ def parse_args() -> argparse.Namespace:
 def initialize_wallet(debug: bool = False) -> ZWallet:
     """Initialize the wallet with adapters"""
     wallet = ZWallet()
-    wallet.add_adapter(UniswapAdapter(wallet))
+    wallet.add_adapter(LiFiAdapter(wallet))
     return wallet
 
 
@@ -54,9 +55,6 @@ async def websocket_endpoint(websocket: WebSocket):
     stream = WebSocketStream(websocket)
     runtime = Runtime(wallet=wallet, message_stream=stream, debug=app.state.debug)
 
-    # Start heartbeat task
-    heartbeat_task = asyncio.create_task(connection_manager.send_heartbeat(websocket))
-
     try:
         while True:
             message = await stream.receive_message()
@@ -76,8 +74,8 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
     finally:
         connection_manager.disconnect(websocket)
-        heartbeat_task.cancel()
-        await websocket.close()
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            await websocket.close()
         tracemalloc.stop()
 
 

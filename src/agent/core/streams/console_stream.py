@@ -4,6 +4,9 @@ import sys
 
 
 class ConsoleStream(MessageStream):
+    async def is_connected(self) -> bool:
+        return True
+
     async def send_message(self, message: str) -> None:
         print(f"\n{message}")
 

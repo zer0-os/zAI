@@ -154,8 +154,19 @@ class OpenAIProvider(ModelProvider):
                                             if "function" in new_tool_call:
                                                 if "function" not in existing_tool_call:
                                                     existing_tool_call["function"] = {}
+                                                arguments = existing_tool_call[
+                                                    "function"
+                                                ]["arguments"]
                                                 existing_tool_call["function"].update(
                                                     new_tool_call["function"]
+                                                )
+                                                existing_tool_call["function"][
+                                                    "arguments"
+                                                ] = (
+                                                    arguments
+                                                    + new_tool_call["function"][
+                                                        "arguments"
+                                                    ]
                                                 )
                                             for key, value in new_tool_call.items():
                                                 if key != "function":

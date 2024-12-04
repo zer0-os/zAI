@@ -60,6 +60,8 @@ class Runtime(ABC):
 
         Returns:
             Union[str, BaseAgent]: Either a JSON serialized result string or a BaseAgent instance
+        Raises:
+            ValueError: If no agent is found with the requested tool method
         """
         try:
             method_name = tool_call["function"]["name"]
@@ -79,7 +81,9 @@ class Runtime(ABC):
             raise ValueError(f"No agent found with tool method: {method_name}")
 
         except Exception as e:
-            return f"Error executing tool: {str(e)}"
+            error_message = f"Tool execution failed: {str(e)}"
+            self._debug_log("Tool execution error", error_message)
+            return error_message
 
     def _debug_log(self, message: str, data: Optional[Any] = None) -> None:
         """Log debug information if debug mode is enabled
@@ -136,35 +140,45 @@ class Runtime(ABC):
             generation_count += 1
             self._debug_log(f"Generation attempt {generation_count}")
 
-            async for chunk in self._current_agent.generate():
-                if chunk == "stop":
-                    status = "complete"
-                    break
+            try:
+                async for chunk in self._current_agent.generate():
+                    if chunk == "stop":
+                        status = "complete"
+                        break
 
-                if "tool_calls" not in chunk:
-                    yield chunk["content"]
-                else:
-                    self._debug_log("Tool calls detected", chunk)
-                    self._message_manager.add_message(
-                        chunk["content"],
-                        "assistant",
-                        tool_calls=chunk["tool_calls"],
-                    )
-
-                    # Then process each tool call
-                    for tool_call in chunk["tool_calls"]:
-                        result = await self._execute_tool(tool_call)
-                        if isinstance(result, BaseAgent):
-                            self._current_agent = result
-                            generation_count = 0
-                            self._debug_log(
-                                "Switching to new agent, resetting generation count"
-                            )
-                            result = f"Transferring to {result.name}. You may continue."
-
+                    if "tool_calls" not in chunk:
+                        yield chunk["content"]
+                    else:
+                        self._debug_log("Tool calls detected", chunk)
                         self._message_manager.add_message(
-                            result, "tool", tool_id=tool_call["id"]
+                            chunk["content"],
+                            "assistant",
+                            tool_calls=chunk["tool_calls"],
                         )
 
-        if status != "complete":
+                        # Then process each tool call
+                        for tool_call in chunk["tool_calls"]:
+                            result = await self._execute_tool(tool_call)
+                            if isinstance(result, BaseAgent):
+                                self._current_agent = result
+                                generation_count = 0
+                                self._debug_log(
+                                    "Switching to new agent, resetting generation count"
+                                )
+                                result = (
+                                    f"Transferring to {result.name}. You may continue."
+                                )
+
+                            # Always add the result to message history, whether success or failure
+                            self._message_manager.add_message(
+                                result, "tool", tool_id=tool_call["id"]
+                            )
+
+            except Exception as e:
+                self._debug_log("Generation failed", str(e))
+                status = "failed"
+                yield "I apologize, but I encountered an error"
+                break
+
+        if status == "streaming":
             yield "I'm sorry, I'm having trouble processing your request. Please try again later."

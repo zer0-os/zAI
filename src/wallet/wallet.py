@@ -44,6 +44,7 @@ class ZWallet:
         self._adapter_registry = AdapterRegistry()
         common_contracts.initialize(self._web3)
         self._tracked_tokens: Set[str] = set()
+        self._chain_id = int(os.getenv("CHAIN_ID") or 1)
 
     def load_private_key(self, key_path):
         with open(key_path) as keyfile:

@@ -1,3 +1,6 @@
+import json
+import os
+import shortuuid
 from typing import Optional, Dict
 from decimal import Decimal
 
@@ -92,10 +95,9 @@ class WalletAgent(BaseAgent):
 
     @agent_tool(
         descriptions={
-            "token_in": "The address of the token to swap from",
-            "token_out": "The address of the token to swap to",
+            "token_in": "The address or symbol of the token to swap from",
+            "token_out": "The address or symbol of the token to swap to",
             "amount_in": "The amount of input token to swap",
-            "min_amount_out": "The minimum amount of output token to receive",
         }
     )
     async def swap(
@@ -109,12 +111,76 @@ class WalletAgent(BaseAgent):
         Swap one token for another using the wallet's swap functionality.
 
         Args:
-            token_in: The address of the token to swap from
-            token_out: The address of the token to swap to
+            token_in: The address or symbol of the token to swap from
+            token_out: The address or symbol of the token to swap to
             amount_in: The amount of input token to swap
             min_amount_out: The minimum amount of output token to receive
 
         Returns:
             str: The transaction hash
         """
-        pass
+        # Get the LiFi adapter
+        lifi_adapter = self._wallet.get_adapter("lifi")
+
+        # Get chain ID from wallet
+        chain_id = self._wallet._chain_id
+
+        # Get token information
+        token_in_info = lifi_adapter.get_token_info(chain_id, token_in)
+        token_out_info = lifi_adapter.get_token_info(chain_id, token_out)
+
+        # Get quote for the swap
+        quote = lifi_adapter.get_quote(
+            chain_id=chain_id,
+            token_in=token_in_info,
+            token_out=token_out_info,
+            amount_in=amount_in,
+        )
+
+        # Broadcast quote message
+        quote_message_id = shortuuid.uuid()
+        await self._message_stream.send_message(
+            json.dumps(
+                {
+                    "type": "swap_quote",
+                    "id": quote_message_id,
+                    "quote": {
+                        "fromToken": token_in_info,
+                        "toToken": token_out_info,
+                        "estimate": {
+                            "fromAmount": quote["estimate"]["fromAmount"],
+                            "toAmount": quote["estimate"]["toAmount"],
+                            "fromAmountUSD": quote["estimate"]["fromAmountUSD"],
+                            "toAmountUSD": quote["estimate"]["toAmountUSD"],
+                        },
+                    },
+                }
+            )
+        )
+
+        # If min_amount_out is specified, validate the quote
+        if min_amount_out is not None:
+            estimated_out = Decimal(quote["estimate"]["toAmount"]) / Decimal(
+                10**token_out_info.decimals
+            )
+            if estimated_out < min_amount_out:
+                raise ValueError(
+                    f"Estimated output {estimated_out} is less than minimum required {min_amount_out}"
+                )
+
+        # Execute the swap
+        swap_message_id = shortuuid.uuid()
+        async for status in lifi_adapter.swap(quote):
+            await self._message_stream.send_message(
+                json.dumps(
+                    {
+                        "type": "swap_status",
+                        "id": swap_message_id,
+                        "message": status.get("message"),
+                        "txHash": status.get("transaction_hash") or "",
+                        "status": status.get("status"),
+                    }
+                )
+            )
+
+        return json.dumps(status)
