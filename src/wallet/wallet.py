@@ -32,10 +32,11 @@ class ZWallet:
         assert rpc_url, "RPC_URL is not set"
         self._web3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(rpc_url))
         hardhat_private_key = os.getenv("HARDHAT_PRIVATE_KEY")
+        keyfile = key_path if key_path else "./keyfile"
         if hardhat_private_key:
             self._account = self._web3.eth.account.from_key(hardhat_private_key)
-        else:
-            private_key = self.load_private_key(key_path if key_path else "./keyfile")
+        elif keyfile:
+            private_key = self.load_private_key(keyfile)
             self._account = (
                 None
                 if not private_key

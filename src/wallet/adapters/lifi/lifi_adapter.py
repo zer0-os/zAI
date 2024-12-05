@@ -57,8 +57,9 @@ class LiFiAdapter(BaseAdapter):
         Get a quote for a token swap using LiFi API
 
         Args:
-            token_in: Address of input token
-            token_out: Address of output token
+            chain_id: Chain ID for the transaction
+            token_in: Input token information
+            token_out: Output token information
             amount_in: Amount of input token (in decimal)
 
         Returns:
@@ -71,8 +72,8 @@ class LiFiAdapter(BaseAdapter):
         amount_base_units = str(int(amount_in * Decimal(10 ** token_in["decimals"])))
 
         params = {
-            "fromChain": chain_id,
-            "toChain": chain_id,
+            "fromChain": str(chain_id),
+            "toChain": str(chain_id),
             "fromToken": token_in["address"],
             "toToken": token_out["address"],
             "fromAmount": amount_base_units,
@@ -81,7 +82,11 @@ class LiFiAdapter(BaseAdapter):
         }
 
         try:
-            response = requests.get(f"{self.LIFI_API_URL}/quote", params=params)
+            response = requests.get(
+                f"{self.LIFI_API_URL}/quote",
+                params=params,
+                headers={"accept": "application/json"},
+            )
             response.raise_for_status()
             quote_data = response.json()
 
@@ -107,9 +112,6 @@ class LiFiAdapter(BaseAdapter):
         Returns:
             Final swap result with transaction details
         """
-        from_token = quote["action"]["fromToken"]
-        to_token = quote["action"]["toToken"]
-
         transaction_request = {
             "data": quote["transactionRequest"]["data"],
             "to": quote["transactionRequest"]["to"],
@@ -130,22 +132,15 @@ class LiFiAdapter(BaseAdapter):
             transaction_request, self._wallet._account.key
         )
 
-        # Yield broadcasting status
-        yield {
-            "status": "broadcasting",
-            "message": "Broadcasting transaction to network...",
-        }
-
-        tx_hash = await self._wallet._web3.eth.send_raw_transaction(
-            signed_tx.raw_transaction
-        )
-
-        # Yield pending status with transaction hash
         yield {
             "status": "pending",
             "message": "Transaction submitted, waiting for confirmation...",
             "transaction_hash": tx_hash.hex(),
         }
+
+        tx_hash = await self._wallet._web3.eth.send_raw_transaction(
+            signed_tx.raw_transaction
+        )
 
         receipt = await self._wallet._web3.eth.wait_for_transaction_receipt(tx_hash)
 
