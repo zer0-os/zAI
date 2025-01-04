@@ -1,11 +1,9 @@
 from abc import ABC, abstractmethod
-import json
-from typing import List, Dict, Any, Optional, Union, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator
 import logging
 from agent.core.memory.message_manager import MessageManager
 from agent.core.providers.model_provider import ModelProvider
 from agent.core.decorators.tool import ToolMetadata
-from wallet.wallet import ZWallet
 from agent.core.interfaces.message_stream import MessageStream
 
 

@@ -142,7 +142,9 @@ class LiFiAdapter(BaseAdapter):
             signed_tx.raw_transaction
         )
 
-        receipt = await self._wallet._web3.eth.wait_for_transaction_receipt(tx_hash)
+        receipt = await self._wallet._web3.eth.wait_for_transaction_receipt(
+            tx_hash, poll_latency=0.5
+        )
 
         # Return final result
         yield {

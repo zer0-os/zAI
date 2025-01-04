@@ -24,4 +24,4 @@ RUN pip install poetry
 # Copy from builder
 COPY --from=builder /app /app
 
-CMD ["/app/.venv/bin/python", "./src/main.py", "--web", "--port", "8000"]
+CMD ["/app/.venv/bin/python", "./src/main.py", "--web", "--debug", "--port", "8000"]

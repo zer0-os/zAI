@@ -1,10 +1,11 @@
 import asyncio
+import base64
 import os
-from typing import List, Optional, Dict, Any, Set
-from abc import ABC, abstractmethod
+from typing import List, Optional, Dict, Any, Set, AsyncGenerator
 from eth_account import Account
 from web3 import AsyncWeb3
 from decimal import Decimal
+from agent.types.agent_info import AgentInfo
 from wallet.exceptions import (
     WalletError,
     InvalidAddressError,
@@ -13,6 +14,8 @@ from wallet.adapters.adapter_registry import AdapterRegistry
 from wallet.adapters.base_adapter import BaseAdapter
 from wallet.tools import wallet_tool
 from wallet.adapters.common.contract_registry import common_contracts
+from utils.privy_auth import PrivyAuthorizationSigner
+import aiohttp
 
 
 class ZWallet:
@@ -21,7 +24,7 @@ class ZWallet:
     Provides simplified interfaces for transfers, token operations, and NFT interactions.
     """
 
-    def __init__(self, key_path: Optional[str] = None):
+    def __init__(self, agent_data: AgentInfo):
         """
         Initialize the wallet wrapper.
 
@@ -31,29 +34,16 @@ class ZWallet:
         rpc_url = os.getenv("RPC_URL")
         assert rpc_url, "RPC_URL is not set"
         self._web3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(rpc_url))
-        hardhat_private_key = os.getenv("HARDHAT_PRIVATE_KEY")
-        keyfile = key_path if key_path else "./keyfile"
-        if hardhat_private_key:
-            self._account = self._web3.eth.account.from_key(hardhat_private_key)
-        elif keyfile:
-            private_key = self.load_private_key(keyfile)
-            self._account = (
-                None
-                if not private_key
-                else self._web3.eth.account.from_key(private_key)
-            )
         self._adapter_registry = AdapterRegistry()
         common_contracts.initialize(self._web3)
         self._tracked_tokens: Set[str] = set()
         self._chain_id = int(os.getenv("CHAIN_ID") or 1)
-
-    def load_private_key(self, key_path):
-        with open(key_path) as keyfile:
-            encrypted_key = keyfile.read()
-            key_password = os.getenv("KEY_PASSWORD")
-            assert key_password, "KEY_PASSWORD is not set"
-            private_key = self._web3.eth.account.decrypt(encrypted_key, key_password)
-            return private_key
+        self._agent_data = agent_data
+        self._wallet_address = agent_data.wallet_address
+        self._privy_signer = PrivyAuthorizationSigner(
+            app_id=os.getenv("PRIVY_APP_ID", "")
+        )
+        self._wallet_id = agent_data.wallet_id
 
     def add_adapter(self, adapter: BaseAdapter) -> None:
         """
@@ -80,23 +70,16 @@ class ZWallet:
         """Get all registered adapters"""
         return list(self._adapter_registry._adapters.values())
 
-    # @wallet_tool()
     async def get_address(self) -> str:
         """Returns wallet address for receiving deposits"""
-        return f"Wallet address: {self._account.address}"
+        return f"Wallet address: {self._wallet_address}"
 
     @wallet_tool(descriptions={"token_address": "Token contract address, None for ETH"})
     async def transfer(
         self, to_address: str, amount: Decimal, token_address: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Send tokens or ETH to another wallet address. Use this method when:
-        - User wants to send/transfer ETH to someone
-        - User wants to send/transfer specific tokens to an address
-        - User needs to move funds between wallets
-        - User wants to pay someone in crypto
-
-        Common triggers: "send eth", "transfer tokens", "pay", "send money to", "transfer to wallet"
+        Send tokens or ETH to another wallet address.
 
         Args:
             to_address (str): Recipient address
@@ -104,49 +87,50 @@ class ZWallet:
             token_address (Optional[str]): Token contract address, None for ETH
 
         Returns:
-            Dict[str, Any]: Transaction receipt
+            Dict[str, Any]: Transaction status and details
         """
         if not self._web3.is_address(to_address):
             raise InvalidAddressError(f"Invalid recipient address: {to_address}")
 
-        nonce = await self._web3.eth.get_transaction_count(self._account.address)
-        if token_address:
+        nonce = await self._web3.eth.get_transaction_count(self._wallet_address)
+        if (
+            token_address
+            and token_address != "0x0000000000000000000000000000000000000000"
+            and token_address.upper() != "ETH"
+        ):
             # ERC20 token transfer
             token_contract = common_contracts.get_contract("erc20", token_address)
             tx = token_contract.functions.transfer(
                 to_address, amount
             ).build_transaction(
                 {
-                    "from": self._account.address,
+                    "from": self._wallet_address,
                     "nonce": nonce,
                 }
             )
-            signed_tx = self._web3.eth.account.sign_transaction(tx, self._account.key)
-            tx_hash = await self._web3.eth.send_raw_transaction(
-                signed_tx.raw_transaction
-            )
         else:
-            # ETH transfer - Convert amount to Wei
+            # ETH transfer
             amount_wei = self._web3.to_wei(amount, "ether")
             tx = {
-                "from": self._account.address,
+                "from": self._wallet_address,
                 "to": to_address,
                 "value": amount_wei,
                 "nonce": nonce,
-                "gas": 21000,  # Standard gas limit for ETH transfers
-                "gasPrice": await self._web3.eth.gas_price,
+                "gas": 21000,
+                "gas_price": await self._web3.eth.gas_price,
             }
 
-            signed_tx = self._web3.eth.account.sign_transaction(tx, self._account.key)
-            tx_hash = await self._web3.eth.send_raw_transaction(
-                signed_tx.raw_transaction
-            )
+        # Use Privy to sign and send the transaction
+        response = await self.sign_transaction_with_privy(tx)
 
-        # Convert AttributeDict to regular dict before returning
-        receipt = await self._web3.eth.wait_for_transaction_receipt(tx_hash)
+        tx_hash = response.get("data", {}).get("hash")
+        if not tx_hash:
+            raise WalletError("No transaction hash returned from Privy")
+
         return {
-            "transaction_hash": receipt["transactionHash"].hex(),
-            "status": "success" if receipt["status"] == 1 else "failed",
+            "status": "pending",
+            "message": "Transaction submitted, waiting for confirmation...",
+            "transaction_hash": tx_hash,
         }
 
     @wallet_tool(
@@ -211,3 +195,60 @@ class ZWallet:
     def get_tracked_tokens(self) -> List[str]:
         """Returns list of tracked token addresses"""
         return list(self._tracked_tokens)
+
+    async def sign_transaction_with_privy(
+        self, transaction: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Sign and send a transaction using Privy's wallet API.
+
+        Args:
+            transaction (Dict[str, Any]): Transaction parameters following eth_signTransaction format
+
+        Returns:
+            Dict[str, Any]: Transaction response from Privy API
+
+        Raises:
+            WalletError: If the API request fails
+        """
+        url = f"https://api.privy.io/v1/wallets/{self._wallet_id}/rpc"
+
+        privy_app_id = os.getenv("PRIVY_APP_ID")
+
+        privy_app_secret = os.getenv("PRIVY_APP_SECRET")
+
+        if not privy_app_id or not privy_app_secret:
+            raise ValueError(
+                "PRIVY_APP_ID and PRIVY_APP_SECRET environment variables must be set"
+            )
+
+        # Create basic auth header from app_id:app_secret
+        auth_string = f"{privy_app_id}:{privy_app_secret}"
+        basic_auth = base64.b64encode(auth_string.encode()).decode()
+
+        # Ensure chain_id is included in transaction
+        if "chain_id" not in transaction:
+            transaction["chain_id"] = self._chain_id
+
+        body = {
+            "method": "eth_sendTransaction",
+            "caip2": f"eip155:{self._chain_id}",
+            "params": {"transaction": transaction},
+        }
+
+        # Get Privy authorization headers
+        headers = self._privy_signer.get_auth_headers(url=url, body=body, method="POST")
+        headers.update(
+            {
+                "Content-Type": "application/json",
+                "Authorization": f"Basic {basic_auth}",
+            }
+        )
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=body, headers=headers) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise WalletError(f"Privy API request failed: {error_text}")
+
+                return await response.json()

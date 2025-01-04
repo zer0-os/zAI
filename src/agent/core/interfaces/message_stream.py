@@ -15,8 +15,24 @@ class MessageStream(ABC):
 
     @abstractmethod
     async def send_partial(self, chunk: str) -> None:
+        """Send a partial message chunk"""
         pass
 
     @abstractmethod
     async def receive_message(self) -> str:
+        """Receive any incoming message"""
+        pass
+
+    @abstractmethod
+    async def wait_for_user_response(self) -> str:
+        """
+        Wait specifically for a user response message.
+        This method should block until a user response is received.
+
+        Returns:
+            str: The user's response message
+
+        Raises:
+            WebSocketDisconnect: If the connection is closed while waiting
+        """
         pass

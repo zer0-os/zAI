@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 from agent.core.interfaces.message_stream import MessageStream
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
@@ -25,4 +26,26 @@ class WebSocketStream(MessageStream):
         except Exception as e:
             if not await self.is_connected():
                 raise WebSocketDisconnect() from e
+            raise
+
+    async def wait_for_user_response(self) -> str:
+        """
+        Actively wait for and return a user response through the WebSocket.
+
+        Returns:
+            str: The user's response message
+
+        Raises:
+            WebSocketDisconnect: If the connection is closed while waiting
+        """
+        if not await self.is_connected():
+            raise WebSocketDisconnect("Connection is already closed")
+
+        try:
+            return await self._websocket.receive_text()
+        except Exception as e:
+            if not await self.is_connected():
+                raise WebSocketDisconnect(
+                    "Connection closed while waiting for response"
+                ) from e
             raise

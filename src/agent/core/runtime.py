@@ -17,13 +17,21 @@ class Runtime(ABC):
     """Multi-agent runtime configuration and initialization"""
 
     def __init__(
-        self, wallet: ZWallet, message_stream: MessageStream, debug: bool = False
+        self,
+        wallet: ZWallet | None,
+        message_stream: MessageStream,
+        entry_agent: BaseAgent,
+        agents: list[BaseAgent],
+        message_manager: MessageManager,
+        debug: bool = False,
     ) -> None:
         """Initialize the runtime with multiple agents
 
         Args:
             wallet: Wallet instance for blockchain interactions
             message_stream: Stream for sending/receiving messages
+            entry_agent: The initial agent that handles incoming messages
+            agents: List of available agents for tool execution
             debug: Enable debug logging if True
         """
         self._debug = debug
@@ -34,26 +42,12 @@ class Runtime(ABC):
 
         self._generate_count = 0
         self._wallet = wallet
-        self._message_manager = MessageManager()
+        self._message_manager = message_manager
         self._message_stream = message_stream
 
-        # Initialize all agents
-        wallet_agent = WalletAgent(
-            wallet=wallet,
-            message_manager=self._message_manager,
-            message_stream=self._message_stream,
-            debug=debug,
-        )
-        self._agents = [wallet_agent]
-
-        routing_agent = RoutingAgent(
-            agents=self._agents,
-            message_manager=self._message_manager,
-            message_stream=self._message_stream,
-            debug=debug,
-        )
-        self._routing_agent = routing_agent
-        self._current_agent: Optional[BaseAgent] = routing_agent
+        self._agents = agents
+        self._entry_agent = entry_agent
+        self._current_agent: Optional[BaseAgent] = entry_agent
 
     async def _execute_tool(self, tool_call: Dict[str, Any]) -> str | BaseAgent:
         """Execute a tool call by finding the appropriate agent and method
@@ -102,7 +96,7 @@ class Runtime(ABC):
         """Process a user message by routing it to the appropriate agent"""
         try:
             self._debug_log("Processing user message", message)
-            self._current_agent = self._routing_agent  # Reset agent on new message
+            self._current_agent = self._entry_agent  # Reset agent on new message
 
             self._message_manager.add_message(message, "user")
 
@@ -136,7 +130,7 @@ class Runtime(ABC):
         """Generate a response from the current agent"""
         generation_count = 0
         status = "streaming"
-        while generation_count < 3 and status == "streaming":
+        while generation_count < 2 and status == "streaming":
             generation_count += 1
             self._debug_log(f"Generation attempt {generation_count}")
 

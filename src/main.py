@@ -1,15 +1,36 @@
 import asyncio
 import argparse
 import tracemalloc
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from typing import Optional
+from google.oauth2 import id_token
+from google.auth.transport import requests
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.websockets import WebSocketState
+from agent.agents.intro_agent import IntroAgent
+from agent.agents.routing_agent import RoutingAgent
+from agent.agents.wallet_agent import WalletAgent
+from agent.core.memory.message_manager import MessageManager
 from agent.core.runtime import Runtime
 from agent.core.streams.websocket_stream import WebSocketStream
 from agent.core.streams.console_stream import ConsoleStream
 from agent.core.agent_interface.interface import clear_screen
+from agent.types.agent_info import AgentInfo
 from wallet.wallet import ZWallet
 from wallet.adapters.lifi import LiFiAdapter
 from core.websocket.connection_manager import ConnectionManager
+import os
+from dotenv import load_dotenv
+import aiohttp
+from db.agent_repository import AgentRepository
+from db.connection import DatabaseConnection
+from contextlib import asynccontextmanager
+
+# Load environment variables
+load_dotenv(override=True)
+
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+if not GOOGLE_CLIENT_ID:
+    raise ValueError("GOOGLE_CLIENT_ID environment variable is not set")
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,21 +48,144 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def initialize_wallet(debug: bool = False) -> ZWallet:
+def initialize_wallet(agent_data: AgentInfo) -> ZWallet:
     """Initialize the wallet with adapters"""
-    wallet = ZWallet()
+    wallet = ZWallet(agent_data=agent_data)
     wallet.add_adapter(LiFiAdapter(wallet))
     return wallet
 
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage database connection lifecycle."""
+    app.state.db_connection = DatabaseConnection()
+    yield
+    if hasattr(app.state, "db_connection"):
+        app.state.db_connection.close()
+
+
+app = FastAPI(lifespan=lifespan)
 
 # Initialize connection manager
 connection_manager = ConnectionManager()
 
 
+@app.websocket("/intro-agent")
+async def websocket_endpoint(websocket: WebSocket):
+    # Get token from URL query parameters
+    token = websocket.query_params.get("access_token")
+    if not token:
+        await websocket.close(code=4001, reason="Missing access token")
+        return
+
+    user_info = await verify_google_token(token)
+    if not user_info:
+        await websocket.close(code=4001, reason="Invalid authentication token")
+        return
+
+    # Try to establish connection
+    if not await connection_manager.connect(websocket):
+        return
+
+    # Add user info to the websocket state
+    websocket.state.user = user_info
+
+    # Initialize components
+    stream = WebSocketStream(websocket)
+    message_manager = MessageManager()
+
+    intro_agent = IntroAgent(
+        message_manager=message_manager,
+        message_stream=stream,
+        user_id=user_info.get("sub"),
+        debug=app.state.debug,
+    )
+
+    runtime = Runtime(
+        wallet=None,
+        message_stream=stream,
+        entry_agent=intro_agent,
+        agents=[intro_agent],
+        message_manager=message_manager,
+        debug=app.state.debug,
+    )
+
+    try:
+        while True:
+            message = await stream.receive_message()
+            await runtime.process_message(message)
+
+    except WebSocketDisconnect:
+        print("Client disconnected")
+    except Exception as e:
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            try:
+                await stream.send_message(f"Error: {str(e)}")
+            except:
+                pass
+    finally:
+        connection_manager.disconnect(websocket)
+        try:
+            if websocket.client_state != WebSocketState.DISCONNECTED:
+                await websocket.close()
+        except:
+            pass
+
+
+async def verify_google_token(token: str) -> Optional[dict]:
+    """
+    Verify the Google OAuth token and return the user info if valid.
+
+    Args:
+        token: The Google OAuth access token
+
+    Returns:
+        dict: User information if token is valid
+        None: If token is invalid
+    """
+    try:
+        # Make a request to Google's userinfo endpoint using the access token
+        userinfo_endpoint = "https://www.googleapis.com/oauth2/v3/userinfo"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(userinfo_endpoint, headers=headers) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    print(f"Failed to get user info: {response.status}")
+                    return None
+
+    except Exception as e:
+        print(f"Token verification failed: {str(e)}")
+        return None
+
+
 @app.websocket("/chat")
 async def websocket_endpoint(websocket: WebSocket):
+    # Get token from URL query parameters
+    token = websocket.query_params.get("access_token")
+    if not token:
+        await websocket.close(code=4001, reason="Missing access token")
+        return
+
+    user_info = await verify_google_token(token)
+    if not user_info:
+        await websocket.close(code=4001, reason="Invalid authentication token")
+        return
+
+    agent_id = websocket.query_params.get("agent_id")
+    if not agent_id:
+        await websocket.close(code=4002, reason="Missing agent_id")
+        return
+
+    agent_repo = AgentRepository(app.state.db_connection)
+    agent_data = agent_repo.fetch_agent(agent_id)
+
+    if not agent_data or agent_data.user_id != user_info["sub"]:
+        await websocket.close(code=4003, reason="Invalid agent access")
+        return
+
     # Start memory tracking
     tracemalloc.start()
     snapshot_start = tracemalloc.take_snapshot()
@@ -50,10 +194,39 @@ async def websocket_endpoint(websocket: WebSocket):
     if not await connection_manager.connect(websocket):
         return
 
+    # Add user info to the websocket state
+    websocket.state.user = user_info
+
     # Initialize components
-    wallet = initialize_wallet()
+    wallet = initialize_wallet(agent_data)
     stream = WebSocketStream(websocket)
-    runtime = Runtime(wallet=wallet, message_stream=stream, debug=app.state.debug)
+    message_manager = MessageManager()
+
+    # Initialize all agents with agent data
+    wallet_agent = WalletAgent(
+        wallet=wallet,
+        message_manager=message_manager,
+        message_stream=stream,
+        debug=app.state.debug,
+        agent_data=agent_data,
+    )
+    agents = [wallet_agent]
+
+    routing_agent = RoutingAgent(
+        agents=agents,
+        message_manager=message_manager,
+        message_stream=stream,
+        debug=app.state.debug,
+    )
+
+    runtime = Runtime(
+        wallet=wallet,
+        message_stream=stream,
+        entry_agent=routing_agent,
+        agents=agents,
+        message_manager=message_manager,
+        debug=app.state.debug,
+    )
 
     try:
         while True:
@@ -68,14 +241,19 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         print("Client disconnected")
     except Exception as e:
-        try:
-            await stream.send_message(f"Error: {str(e)}")
-        except:
-            pass
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            try:
+                await stream.send_message(f"Error: {str(e)}")
+            except:
+                pass
     finally:
         connection_manager.disconnect(websocket)
-        if websocket.client_state != WebSocketState.DISCONNECTED:
-            await websocket.close()
+        # Only attempt to close if the connection is still open
+        try:
+            if websocket.client_state != WebSocketState.DISCONNECTED:
+                await websocket.close()
+        except:
+            pass
         tracemalloc.stop()
 
 

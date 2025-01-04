@@ -6,7 +6,7 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/main.py",
-      "args": ["--web", "--port", "8000"],
+      "args": ["--web", "--debug", "--port", "8000"],
       "console": "integratedTerminal",
       "justMyCode": true,
       "env": {

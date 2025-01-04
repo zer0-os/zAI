@@ -8,6 +8,7 @@ from agent.core.base_agent import BaseAgent
 from agent.core.memory.message_manager import MessageManager
 from agent.core.providers.open_ai import OpenAIProvider
 from agent.core.decorators.tool import agent_tool
+from agent.types.agent_info import AgentInfo
 from wallet.wallet import ZWallet
 from agent.core.decorators.agent import agent
 from agent.core.interfaces.message_stream import MessageStream
@@ -29,6 +30,7 @@ class WalletAgent(BaseAgent):
         wallet: ZWallet,
         message_manager: MessageManager,
         message_stream: MessageStream,
+        agent_data: AgentInfo,
         debug: bool = False,
     ) -> None:
         """Initialize the wallet agent
@@ -40,6 +42,7 @@ class WalletAgent(BaseAgent):
             debug: Enable debug logging if True
         """
         self._wallet = wallet
+        self._agent_data = agent_data
         model_provider = OpenAIProvider(debug=debug)
         super().__init__(
             model_provider=model_provider,
@@ -86,12 +89,55 @@ class WalletAgent(BaseAgent):
             amount: The amount to transfer
 
         Returns:
-            str: The transaction hash
+            str: The final transaction status as JSON
         """
-
-        return await self._wallet.transfer(
-            token_address=token_address, to_address=to_address, amount=amount
+        # Get initial pending status
+        status = await self._wallet.transfer(
+            to_address=to_address, amount=amount, token_address=token_address
         )
+
+        # Send pending status
+        await self._message_stream.send_message(
+            json.dumps(
+                {
+                    "type": "transaction",
+                    "id": shortuuid.uuid(name="pending"),
+                    "message": status.get("message"),
+                    "txHash": status.get("transaction_hash") or "",
+                    "status": status.get("status"),
+                }
+            )
+        )
+
+        # Wait for receipt and get final status
+        receipt = await self._wallet._web3.eth.wait_for_transaction_receipt(
+            status["transaction_hash"], poll_latency=0.5
+        )
+
+        final_status = {
+            "status": "success" if receipt["status"] == 1 else "failed",
+            "message": (
+                "Transaction confirmed"
+                if receipt["status"] == 1
+                else "Transaction failed"
+            ),
+            "transaction_hash": receipt["transactionHash"].hex(),
+        }
+
+        # Send final status
+        await self._message_stream.send_message(
+            json.dumps(
+                {
+                    "type": "transaction",
+                    "id": shortuuid.uuid(name="final"),
+                    "message": final_status.get("message"),
+                    "txHash": final_status.get("transaction_hash") or "",
+                    "status": final_status.get("status"),
+                }
+            )
+        )
+
+        return json.dumps(final_status)
 
     @agent_tool(
         descriptions={

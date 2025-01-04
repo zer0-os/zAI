@@ -2,7 +2,7 @@
 name = "zAI"
 version = "0.1.0"
 description = "Zero AI Agent framework"
-authors = ["Ricky Roller travelingroller@gmail.com"]
+authors = ["Ricky Roller <travelingroller@gmail.com>"]
 readme = "README.md"
 packages = [
     {include = "agent", from = "src"},
@@ -10,13 +10,17 @@ packages = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.12"
 web3 = "^7.5.0"
 python-dotenv = "^1.0.1"
 halo = "^0.0.31"
 fastapi = "^0.115.5"
 uvicorn = "^0.32.0"
 shortuuid = "^1.0.13"
+google-auth = "^2.37.0"
+psycopg2-binary = "^2.9.10"
+httpx = "^0.28.1"
+cryptography = "^44.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.3.1"
