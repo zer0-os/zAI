@@ -145,7 +145,6 @@ class ZWallet:
         Returns:
             Dict[str, Any]: Combined ETH and token balances
         """
-        raise WalletError("Not implemented")
         # Get ETH balance
         try:
             eth_balance_wei = await self._web3.eth.get_balance(self._wallet_address)
@@ -159,21 +158,22 @@ class ZWallet:
         """Returns list of tracked token addresses"""
         return list(self._tracked_tokens)
 
-    async def sign_transaction(
-        self, transaction: Dict[str, Any], gas_estimate: bool = True
+    async def _make_privy_request(
+        self,
+        method: str,
+        transaction: Dict[str, Any],
+        additional_body_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Sign and send a transaction using Privy's wallet API.
+        Make a request to Privy's wallet API.
 
         Args:
+            method (str): RPC method to execute (e.g., 'eth_sendTransaction', 'eth_signTransaction')
             transaction (Dict[str, Any]): Transaction parameters
-            gas_estimate (bool): Whether to estimate gas if not provided
+            additional_body_params (Optional[Dict[str, Any]]): Additional parameters for request body
 
         Returns:
-            Dict[str, Any]: Transaction response from Privy API
-
-        Raises:
-            WalletError: If the API request fails
+            Dict[str, Any]: Response from Privy API
         """
         url = f"https://api.privy.io/v1/wallets/{self._wallet_id}/rpc"
 
@@ -185,23 +185,19 @@ class ZWallet:
                 "PRIVY_APP_ID and PRIVY_APP_SECRET environment variables must be set"
             )
 
-        auth_string = f"{privy_app_id}:{privy_app_secret}"
-        basic_auth = base64.b64encode(auth_string.encode()).decode()
-
-        # Add chain_id if not present
         if "chain_id" not in transaction:
             transaction["chain_id"] = self._chain_id
 
-        # Estimate gas if needed and not provided
-        if gas_estimate and "gas" not in transaction:
-            gas = await self._web3.eth.estimate_gas(transaction)
-            transaction["gas"] = hex(gas)
+        auth_string = f"{privy_app_id}:{privy_app_secret}"
+        basic_auth = base64.b64encode(auth_string.encode()).decode()
 
         body = {
-            "method": "eth_sendTransaction",
-            "caip2": f"eip155:{self._chain_id}",
+            "method": method,
             "params": {"transaction": transaction},
         }
+
+        if additional_body_params:
+            body.update(additional_body_params)
 
         headers = self._privy_signer.get_auth_headers(url=url, body=body, method="POST")
         headers.update(
@@ -218,3 +214,40 @@ class ZWallet:
                     raise WalletError(f"API request failed: {error_text}")
 
                 return await response.json()
+
+    async def send_transaction(
+        self, transaction: Dict[str, Any], gas_estimate: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Sign and send a transaction using Privy's wallet API.
+
+        Args:
+            transaction (Dict[str, Any]): Transaction parameters
+            gas_estimate (bool): Whether to estimate gas if not provided
+
+        Returns:
+            Dict[str, Any]: Transaction response from Privy API
+        """
+        if gas_estimate and "gas" not in transaction:
+            gas = await self._web3.eth.estimate_gas(transaction)
+            transaction["gas"] = hex(gas)
+
+        return await self._make_privy_request(
+            method="eth_sendTransaction",
+            transaction=transaction,
+            additional_body_params={"caip2": f"eip155:{self._chain_id}"},
+        )
+
+    async def sign_transaction(self, transaction: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Sign a transaction using Privy's wallet API without broadcasting it.
+
+        Args:
+            transaction (Dict[str, Any]): Transaction parameters to sign
+
+        Returns:
+            Dict[str, Any]: Contains the signed transaction and encoding format
+        """
+        return await self._make_privy_request(
+            method="eth_signTransaction", transaction=transaction
+        )

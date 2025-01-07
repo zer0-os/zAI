@@ -77,8 +77,9 @@ class LiFiAdapter(BaseAdapter):
             "fromToken": token_in["address"],
             "toToken": token_out["address"],
             "fromAmount": amount_base_units,
-            "fromAddress": self._wallet._account.address,
+            "fromAddress": self._wallet._wallet_address,
             "slippage": 0.5,  # 0.5% slippage default
+            "order": "CHEAPEST",
         }
 
         try:
@@ -109,25 +110,7 @@ class LiFiAdapter(BaseAdapter):
         Yields:
             Dict containing status updates about the swap progress
         """
-        transaction_request = {
-            "data": quote["transactionRequest"]["data"],
-            "to": quote["transactionRequest"]["to"],
-            "value": quote["transactionRequest"]["value"],
-            "chainId": quote["transactionRequest"]["chainId"],
-            "maxFeePerGas": hex(int(quote["estimate"]["gasCosts"][0]["price"])),
-            "maxPriorityFeePerGas": hex(
-                int(float(quote["estimate"]["gasCosts"][0]["price"]) * 0.1)
-            ),
-            "gas": hex(int(quote["estimate"]["gasCosts"][0]["estimate"])),
-            "type": "0x2",
-            "nonce": await self._wallet._web3.eth.get_transaction_count(
-                self._wallet._wallet_address
-            ),
-        }
-
-        response = await self._wallet.sign_transaction(
-            transaction_request, gas_estimate=False
-        )
+        response = await self._wallet.send_transaction(quote["transactionRequest"])
 
         tx_hash = response.get("data", {}).get("hash")
         if not tx_hash:
