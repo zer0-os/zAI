@@ -49,13 +49,13 @@ class Runtime(ABC):
         self._entry_agent = entry_agent
         self._current_agent: Optional[BaseAgent] = entry_agent
 
-    async def _execute_tool(self, tool_call: Dict[str, Any]) -> str | BaseAgent:
+    async def _execute_tool(
+        self, tool_call: Dict[str, Any]
+    ) -> Dict[str, str | BaseAgent]:
         """Execute a tool call by finding the appropriate agent and method
 
         Returns:
-            Union[str, BaseAgent]: Either a JSON serialized result string or a BaseAgent instance
-        Raises:
-            ValueError: If no agent is found with the requested tool method
+            Dict[str, Any]: Result dictionary containing success status and result/error
         """
         try:
             method_name = tool_call["function"]["name"]
@@ -69,15 +69,18 @@ class Runtime(ABC):
                         result = await method(**args)
                         # Special case for agent transfers
                         if isinstance(result, BaseAgent):
-                            return result
-                        return result
+                            return {"success": True, "result": result}
+                        return {"success": True, "result": result}
 
-            raise ValueError(f"No agent found with tool method: {method_name}")
+            return {
+                "success": False,
+                "error": f"No agent found with tool method: {method_name}",
+            }
 
         except Exception as e:
             error_message = f"Tool execution failed: {str(e)}"
             self._debug_log("Tool execution error", error_message)
-            return error_message
+            return {"success": False, "error": error_message}
 
     def _debug_log(self, message: str, data: Optional[Any] = None) -> None:
         """Log debug information if debug mode is enabled
@@ -130,6 +133,7 @@ class Runtime(ABC):
         """Generate a response from the current agent"""
         generation_count = 0
         status = "streaming"
+
         while generation_count < 2 and status == "streaming":
             generation_count += 1
             self._debug_log(f"Generation attempt {generation_count}")
@@ -150,22 +154,33 @@ class Runtime(ABC):
                             tool_calls=chunk["tool_calls"],
                         )
 
-                        # Then process each tool call
+                        # Process each tool call
                         for tool_call in chunk["tool_calls"]:
                             result = await self._execute_tool(tool_call)
-                            if isinstance(result, BaseAgent):
-                                self._current_agent = result
+
+                            if not result["success"]:
+                                # Add error to message history
+                                self._message_manager.add_message(
+                                    result["error"], "tool", tool_id=tool_call["id"]
+                                )
+                                # Yield specific error and end loop
+                                yield "I'm sorry, something went wrong and I was unable to complete your request"
+                                status = "failed"
+                                return
+
+                            if isinstance(result["result"], BaseAgent):
+                                self._current_agent = result["result"]
                                 generation_count = 0
                                 self._debug_log(
                                     "Switching to new agent, resetting generation count"
                                 )
-                                result = (
-                                    f"Transferring to {result.name}. You may continue."
-                                )
+                                tool_result = f"Transferring to {result['result'].name}. You may continue."
+                            else:
+                                tool_result = result["result"]
 
-                            # Always add the result to message history, whether success or failure
+                            # Add successful result to message history
                             self._message_manager.add_message(
-                                result, "tool", tool_id=tool_call["id"]
+                                tool_result, "tool", tool_id=tool_call["id"]
                             )
 
             except Exception as e:
@@ -175,4 +190,4 @@ class Runtime(ABC):
                 break
 
         if status == "streaming":
-            yield "I'm sorry, I'm having trouble processing your request. Please try again later."
+            yield "Request could not be completed. Please try again."

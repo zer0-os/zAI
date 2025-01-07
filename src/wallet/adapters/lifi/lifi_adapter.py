@@ -108,9 +108,6 @@ class LiFiAdapter(BaseAdapter):
 
         Yields:
             Dict containing status updates about the swap progress
-
-        Returns:
-            Final swap result with transaction details
         """
         transaction_request = {
             "data": quote["transactionRequest"]["data"],
@@ -124,29 +121,28 @@ class LiFiAdapter(BaseAdapter):
             "gas": hex(int(quote["estimate"]["gasCosts"][0]["estimate"])),
             "type": "0x2",
             "nonce": await self._wallet._web3.eth.get_transaction_count(
-                self._wallet._account.address
+                self._wallet._wallet_address
             ),
         }
 
-        signed_tx = self._wallet._web3.eth.account.sign_transaction(
-            transaction_request, self._wallet._account.key
+        response = await self._wallet.sign_transaction(
+            transaction_request, gas_estimate=False
         )
+
+        tx_hash = response.get("data", {}).get("hash")
+        if not tx_hash:
+            raise QuoteError("No transaction hash")
 
         yield {
             "status": "pending",
             "message": "Transaction submitted, waiting for confirmation...",
-            "transaction_hash": tx_hash.hex(),
+            "transaction_hash": tx_hash,
         }
-
-        tx_hash = await self._wallet._web3.eth.send_raw_transaction(
-            signed_tx.raw_transaction
-        )
 
         receipt = await self._wallet._web3.eth.wait_for_transaction_receipt(
             tx_hash, poll_latency=0.5
         )
 
-        # Return final result
         yield {
             "status": "success" if receipt["status"] == 1 else "failed",
             "message": (

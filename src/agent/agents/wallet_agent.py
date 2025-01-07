@@ -66,7 +66,7 @@ class WalletAgent(BaseAgent):
     @agent_tool()
     async def get_balances(self) -> Dict[str, any]:
         """
-        Get the balance of all tokens in the wallet.
+        Get the balance of the ETH in the wallet.
         """
         return await self._wallet.get_balances()
 

@@ -136,74 +136,38 @@ class ZWallet:
     @wallet_tool(
         descriptions={"token_type": "Type of tokens to fetch (erc20, erc721, etc)"}
     )
-    async def get_balances(self, token_type: str = "erc20") -> Dict[str, Any]:
+    async def get_balances(self) -> Dict[str, Any]:
         """
-        Check wallet balances for ETH and tokens. Use this method when:
-        - User wants to check their ETH balance
-        - User wants to see all their token balances
-        - User needs to verify their available funds
-        - User asks about their crypto holdings
-        - User wants to know how much they own
+        Check wallet balances for ETH
 
-        Common triggers: "check balance", "how much eth do i have", "show my tokens",
-        "what's in my wallet", "view balance", "check my crypto"
-
-        Args:
-            token_type (str): Type of tokens to fetch (default: "erc20")
+        Common triggers: "check balance", "how much eth do i have", "view balance", "check my crypto"
 
         Returns:
             Dict[str, Any]: Combined ETH and token balances
         """
-        if not self._account:
-            raise WalletError("Wallet not initialized with private key")
-
+        raise WalletError("Not implemented")
         # Get ETH balance
         try:
-            eth_balance_wei = await self._web3.eth.get_balance(self._account.address)
+            eth_balance_wei = await self._web3.eth.get_balance(self._wallet_address)
             eth_balance = self._web3.from_wei(eth_balance_wei, "ether")
         except Exception as e:
             raise WalletError(f"Failed to fetch ETH balance: {str(e)}")
 
-        # Get tracked token balances
-        token_balances = {}
-        for token_address in self._tracked_tokens:
-            try:
-                token_contract = common_contracts.get_contract("erc20", token_address)
-                raw_balance = await token_contract.functions.balanceOf(
-                    self._account.address
-                ).call()
-                # Get token symbol and decimals
-                symbol = await token_contract.functions.symbol().call()
-                decimals = await token_contract.functions.decimals().call()
-                # Convert raw balance to token amount
-                token_balance = Decimal(raw_balance) / Decimal(10**decimals)
-                token_balances[symbol] = str(token_balance)
-            except Exception as e:
-                raise WalletError(
-                    f"Failed to fetch balance for token {token_address}: {str(e)}"
-                )
-
-        balances = {
-            "ETH": str(eth_balance),
-            **token_balances,
-        }
-        return f"""
-            Display the following wallet balances in a bulleted list using markdown
-            {balances}
-        """
+        return f"ETH: {str(eth_balance)}"
 
     def get_tracked_tokens(self) -> List[str]:
         """Returns list of tracked token addresses"""
         return list(self._tracked_tokens)
 
-    async def sign_transaction_with_privy(
-        self, transaction: Dict[str, Any]
+    async def sign_transaction(
+        self, transaction: Dict[str, Any], gas_estimate: bool = True
     ) -> Dict[str, Any]:
         """
         Sign and send a transaction using Privy's wallet API.
 
         Args:
-            transaction (Dict[str, Any]): Transaction parameters following eth_signTransaction format
+            transaction (Dict[str, Any]): Transaction parameters
+            gas_estimate (bool): Whether to estimate gas if not provided
 
         Returns:
             Dict[str, Any]: Transaction response from Privy API
@@ -214,7 +178,6 @@ class ZWallet:
         url = f"https://api.privy.io/v1/wallets/{self._wallet_id}/rpc"
 
         privy_app_id = os.getenv("PRIVY_APP_ID")
-
         privy_app_secret = os.getenv("PRIVY_APP_SECRET")
 
         if not privy_app_id or not privy_app_secret:
@@ -222,13 +185,17 @@ class ZWallet:
                 "PRIVY_APP_ID and PRIVY_APP_SECRET environment variables must be set"
             )
 
-        # Create basic auth header from app_id:app_secret
         auth_string = f"{privy_app_id}:{privy_app_secret}"
         basic_auth = base64.b64encode(auth_string.encode()).decode()
 
-        # Ensure chain_id is included in transaction
+        # Add chain_id if not present
         if "chain_id" not in transaction:
             transaction["chain_id"] = self._chain_id
+
+        # Estimate gas if needed and not provided
+        if gas_estimate and "gas" not in transaction:
+            gas = await self._web3.eth.estimate_gas(transaction)
+            transaction["gas"] = hex(gas)
 
         body = {
             "method": "eth_sendTransaction",
@@ -236,7 +203,6 @@ class ZWallet:
             "params": {"transaction": transaction},
         }
 
-        # Get Privy authorization headers
         headers = self._privy_signer.get_auth_headers(url=url, body=body, method="POST")
         headers.update(
             {
@@ -249,6 +215,6 @@ class ZWallet:
             async with session.post(url, json=body, headers=headers) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise WalletError(f"Privy API request failed: {error_text}")
+                    raise WalletError(f"API request failed: {error_text}")
 
                 return await response.json()
