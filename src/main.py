@@ -28,9 +28,7 @@ from contextlib import asynccontextmanager
 # Load environment variables
 load_dotenv(override=True)
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-if not GOOGLE_CLIENT_ID:
-    raise ValueError("GOOGLE_CLIENT_ID environment variable is not set")
+API_URL = os.getenv("ZOS_USER_API_URL")
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,7 +76,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=4001, reason="Missing access token")
         return
 
-    user_info = await verify_google_token(token)
+    user_info = await verify_access_token(token)
     if not user_info:
         await websocket.close(code=4001, reason="Invalid authentication token")
         return
@@ -97,7 +95,7 @@ async def websocket_endpoint(websocket: WebSocket):
     intro_agent = IntroAgent(
         message_manager=message_manager,
         message_stream=stream,
-        user_id=user_info.get("sub"),
+        user_id=user_info.get("id"),
         debug=app.state.debug,
     )
 
@@ -132,28 +130,26 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
 
 
-async def verify_google_token(token: str) -> Optional[dict]:
+async def verify_access_token(token: str) -> Optional[dict]:
     """
-    Verify the Google OAuth token and return the user info if valid.
+    Verify the access token by checking against the users/current endpoint.
 
     Args:
-        token: The Google OAuth access token
+        token: The access token
 
     Returns:
         dict: User information if token is valid
         None: If token is invalid
     """
     try:
-        # Make a request to Google's userinfo endpoint using the access token
-        userinfo_endpoint = "https://www.googleapis.com/oauth2/v3/userinfo"
         headers = {"Authorization": f"Bearer {token}"}
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(userinfo_endpoint, headers=headers) as response:
+            async with session.get(API_URL, headers=headers) as response:
                 if response.status == 200:
                     return await response.json()
                 else:
-                    print(f"Failed to get user info: {response.status}")
+                    print(f"Token verification failed with status: {response.status}")
                     return None
 
     except Exception as e:
@@ -169,7 +165,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=4001, reason="Missing access token")
         return
 
-    user_info = await verify_google_token(token)
+    user_info = await verify_access_token(token)
     if not user_info:
         await websocket.close(code=4001, reason="Invalid authentication token")
         return
@@ -182,7 +178,7 @@ async def websocket_endpoint(websocket: WebSocket):
     agent_repo = AgentRepository(app.state.db_connection)
     agent_data = agent_repo.fetch_agent(agent_id)
 
-    if not agent_data or agent_data.user_id != user_info["sub"]:
+    if not agent_data or agent_data.user_id != user_info.get("id"):
         await websocket.close(code=4003, reason="Invalid agent access")
         return
 
