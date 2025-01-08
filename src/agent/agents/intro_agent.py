@@ -18,6 +18,12 @@ from db import DatabaseConnection
 from utils.privy_auth import PrivyAuthorizationSigner
 
 
+class AgentNameValidationError(ValueError):
+    """Base exception for agent name validation errors."""
+
+    pass
+
+
 @agent
 class IntroAgent(BaseAgent):
     """
@@ -56,6 +62,7 @@ class IntroAgent(BaseAgent):
         Returns:
             Tuple[str, str]: A tuple containing (wallet_id, wallet_address)
         """
+        self._logger.debug("Starting Privy wallet creation")
         privy_app_id = os.getenv("PRIVY_APP_ID")
 
         privy_app_secret = os.getenv("PRIVY_APP_SECRET")
@@ -92,6 +99,9 @@ class IntroAgent(BaseAgent):
             )
 
             if response.status_code != 200:
+                self._logger.error(
+                    f"Privy API error: {response.status_code} - {response.text}"
+                )
                 raise Exception(f"Failed to create Privy wallet: {response.text}")
 
             data = response.json()
@@ -130,13 +140,25 @@ class IntroAgent(BaseAgent):
                 "All parameters (name, wallet_id, wallet_address, user_id) are required"
             )
 
+        sanitized_name = name.strip()
+        if not sanitized_name:
+            raise AgentNameValidationError("Agent name cannot be empty")
+
+        if len(sanitized_name) > 30:
+            raise AgentNameValidationError("Agent name must be 30 characters or less")
+
+        if not sanitized_name.replace(" ", "").isalnum():
+            raise AgentNameValidationError(
+                "Agent name can only contain letters, numbers, and spaces"
+            )
+
         try:
             with self._db.get_connection() as conn:
                 with conn.cursor() as cur:
                     # Create the agent
                     cur.execute(
                         "INSERT INTO agents (wallet_id, name, wallet_address) VALUES (%s, %s, %s) RETURNING id",
-                        (wallet_id, name, wallet_address),
+                        (wallet_id, sanitized_name, wallet_address),
                     )
                     agent_id = cur.fetchone()[0]
 
@@ -158,6 +180,7 @@ class IntroAgent(BaseAgent):
         This wizard guides users through the agent creation process, starting with
         naming the agent and creating necessary database entries.
         """
+        self._logger.debug("Starting agent creation wizard")
         try:
             # Get agent name from user
             message_id = shortuuid.uuid()
@@ -172,19 +195,25 @@ class IntroAgent(BaseAgent):
             )
             agent_name = await self._message_stream.wait_for_user_response()
 
-            # Create Privy wallet for the agent
-            wallet_id, wallet_address = await self._create_privy_wallet()
+            try:
+                # Create Privy wallet for the agent
+                wallet_id, wallet_address = await self._create_privy_wallet()
 
-            # Create the agent in the database
-            await self._create_agent_in_db(
-                agent_name, wallet_id, wallet_address, self._user_id
+                # Create the agent in the database
+                await self._create_agent_in_db(
+                    agent_name, wallet_id, wallet_address, self._user_id
+                )
+            except AgentNameValidationError as e:
+                return str(e)  # Return the validation error message to the user
+
+            self._logger.debug(
+                f"Created agent: {agent_name} with wallet: {wallet_address}"
             )
-
             return f"Great! I've created an agent named '{agent_name}' with wallet address {wallet_address} and registered it in the system."
 
         except WebSocketDisconnect:
             self._logger.warning("User disconnected during agent creation wizard")
             raise
         except Exception as e:
-            self._logger.error(f"Error creating agent: {str(e)}")
+            self._logger.error(f"Error during agent creation: {str(e)}")
             raise
