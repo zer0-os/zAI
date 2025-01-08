@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Tuple
 
 import shortuuid
 import base64
-import uuid
+import psycopg2
 
 from agent.core.base_agent import BaseAgent
 from agent.core.decorators.tool import agent_tool
@@ -118,22 +118,37 @@ class IntroAgent(BaseAgent):
         Args:
             name: The name of the agent
             wallet_id: The wallet ID associated with the agent
+            wallet_address: The wallet address of the agent
             user_id: The ID of the user creating the agent
-        """
-        with self._db.get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO agents (wallet_id, name, wallet_address) VALUES (%s, %s, %s) RETURNING id",
-                    (wallet_id, name, wallet_address),
-                )
-                agent_id = cur.fetchone()[0]
 
-                # Create user-agent mapping
-                cur.execute(
-                    "INSERT INTO user_agent_mapping (user_id, agent_id) VALUES (%s, %s)",
-                    (user_id, agent_id),
-                )
-                conn.commit()
+        Raises:
+            ValueError: If any input parameters are empty or invalid
+            DatabaseError: If there's an error during database operations
+        """
+        if not all([name, wallet_id, wallet_address, user_id]):
+            raise ValueError(
+                "All parameters (name, wallet_id, wallet_address, user_id) are required"
+            )
+
+        try:
+            with self._db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Create the agent
+                    cur.execute(
+                        "INSERT INTO agents (wallet_id, name, wallet_address) VALUES (%s, %s, %s) RETURNING id",
+                        (wallet_id, name, wallet_address),
+                    )
+                    agent_id = cur.fetchone()[0]
+
+                    # Create user-agent mapping
+                    cur.execute(
+                        "INSERT INTO user_agent_mapping (user_id, agent_id) VALUES (%s, %s)",
+                        (user_id, agent_id),
+                    )
+                    conn.commit()
+        except Exception as e:
+            self._logger.error(f"Unexpected error while creating agent: {str(e)}")
+            raise
 
     @agent_tool()
     async def create_agent_wizard(self) -> None:
