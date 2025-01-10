@@ -16,6 +16,7 @@ from agent.core.streams.websocket_stream import WebSocketStream
 from agent.core.streams.console_stream import ConsoleStream
 from agent.core.agent_interface.interface import clear_screen
 from agent.types.agent_info import AgentInfo
+from core.models.webhook_events import WebhookEvent
 from wallet.wallet import ZWallet
 from wallet.adapters.lifi import LiFiAdapter
 from core.websocket.connection_manager import ConnectionManager
@@ -183,13 +184,13 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=4003, reason="Invalid agent access")
         return
 
+    # Try to establish connection with agent data as metadata
+    if not await connection_manager.connect(websocket, metadata=agent_data):
+        return
+
     # Start memory tracking
     tracemalloc.start()
     snapshot_start = tracemalloc.take_snapshot()
-
-    # Try to establish connection
-    if not await connection_manager.connect(websocket):
-        return
 
     # Add user info to the websocket state
     websocket.state.user = user_info
@@ -270,6 +271,28 @@ async def chat_loop(runtime: Runtime, stream: ConsoleStream) -> None:
             break
         except Exception as e:
             await stream.send_message(f"Error: {str(e)}")
+
+
+@app.post("/webhook/wallet-events")
+async def wallet_events_webhook(event: WebhookEvent):
+    """Handle webhook events from Privy for wallet transactions"""
+    try:
+        type = "funds_received" if event.amount_received else "funds_sent"
+        message = {"type": type, "data": event.model_dump()}
+
+        # Broadcast to connections where the agent's wallet_id matches the event
+        await connection_manager.broadcast_filtered(
+            message,
+            predicate=lambda metadata: (
+                metadata is not None
+                and hasattr(metadata, "wallet_id")
+                and metadata.wallet_id == event.wallet_id
+            ),
+        )
+
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def main() -> None:

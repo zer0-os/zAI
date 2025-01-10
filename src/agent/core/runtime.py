@@ -130,7 +130,7 @@ class Runtime(ABC):
         generation_count = 0
         status = "streaming"
 
-        while generation_count < 2 and status == "streaming":
+        while generation_count < 3 and status == "streaming":
             generation_count += 1
             self._debug_log(f"Generation attempt {generation_count}")
 
