@@ -1,15 +1,11 @@
 from abc import ABC
-from typing import Dict, Any, Optional, Union, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator
 import json
 import logging
 import shortuuid
-from agent.agents import WalletAgent
-from agent.agents.routing_agent import RoutingAgent
-from agent.core.providers import OpenAIProvider
 from agent.core.memory.message_manager import MessageManager
 from wallet.wallet import ZWallet
 from agent.core.base_agent import BaseAgent
-from agent.core.decorators.tool import ToolMetadata
 from agent.core.interfaces.message_stream import MessageStream
 
 

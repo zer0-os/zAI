@@ -6,6 +6,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.websockets import WebSocketState
+from agent.agents.conversational_agent import ConversationalAgent
 from agent.agents.intro_agent import IntroAgent
 from agent.agents.routing_agent import RoutingAgent
 from agent.agents.wallet_agent import WalletAgent
@@ -206,7 +207,13 @@ async def websocket_endpoint(websocket: WebSocket):
         debug=app.state.debug,
         agent_data=agent_data,
     )
-    agents = [wallet_agent]
+    conversational_agent = ConversationalAgent(
+        agent_name=agent_data.name,
+        message_manager=message_manager,
+        message_stream=stream,
+        debug=app.state.debug,
+    )
+    agents = [wallet_agent, conversational_agent]
 
     routing_agent = RoutingAgent(
         agents=agents,

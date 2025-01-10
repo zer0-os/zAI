@@ -102,7 +102,7 @@ class BaseAgent(ABC):
         """Generate a response using the model provider"""
         messages = self._message_manager.get_messages()
         tools = self._get_tools()
-        system_message = {"role": "system", "content": self.get_system_prompt()}
+        system_message = {"role": "developer", "content": self.get_system_prompt()}
 
         response = await self._model_provider.generate(
             messages=[system_message] + messages, tools=tools, stream=True
