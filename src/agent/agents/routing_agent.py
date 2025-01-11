@@ -35,7 +35,6 @@ class RoutingAgent(BaseAgent):
             debug=debug,
         )
 
-        # Initialize transfer tools list
         self._tools = []
         for agent in self._agents:
             for method_name in dir(agent):
@@ -54,5 +53,9 @@ class RoutingAgent(BaseAgent):
 
     def get_system_prompt(self) -> str | None:
         return """You are a routing agent that directs user requests to specialized agents.
-        Analyze each user message and determine which agent would be best suited to handle it.
-        You must use the tools provided when responding."""
+        Analyze the previous user message and determine which agent would be best suited to handle it.
+        You must use the tools provided when responding. Do not ask the user to confirm or provide more information.
+        """
+
+    def get_capabilities(self) -> str:
+        return ""

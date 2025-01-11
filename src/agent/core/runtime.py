@@ -45,6 +45,10 @@ class Runtime(ABC):
         self._entry_agent = entry_agent
         self._current_agent: Optional[BaseAgent] = entry_agent
 
+        self._capabilities = "".join(
+            [agent.get_capabilities() for agent in self._agents]
+        )
+
     async def _execute_tool(
         self, tool_call: Dict[str, Any]
     ) -> Dict[str, str | BaseAgent]:
@@ -135,7 +139,7 @@ class Runtime(ABC):
             self._debug_log(f"Generation attempt {generation_count}")
 
             try:
-                async for chunk in self._current_agent.generate():
+                async for chunk in self._current_agent.generate(self._capabilities):
                     if chunk == "stop":
                         status = "complete"
                         break
@@ -170,7 +174,7 @@ class Runtime(ABC):
                                 self._debug_log(
                                     "Switching to new agent, resetting generation count"
                                 )
-                                tool_result = f"Transferring to {result['result'].name}. You may continue."
+                                tool_result = ""
                             else:
                                 tool_result = result["result"]
 

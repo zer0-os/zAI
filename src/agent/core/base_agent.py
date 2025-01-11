@@ -66,6 +66,11 @@ class BaseAgent(ABC):
         """
         pass
 
+    @abstractmethod
+    def get_capabilities(self) -> List[str]:
+        """Get the capabilities of this agent"""
+        pass
+
     def _get_tools(self) -> List[Dict[str, Any]]:
         """Get all tools available to this agent. This method can be overridden by subclasses
         to provide custom tool discovery logic.
@@ -98,14 +103,17 @@ class BaseAgent(ABC):
             else:
                 self._logger.debug(message)
 
-    async def generate(self) -> AsyncGenerator[str, None]:
+    async def generate(self, capabilities: str) -> AsyncGenerator[str, None]:
         """Generate a response using the model provider"""
         messages = self._message_manager.get_messages()
         tools = self._get_tools()
         system_message = {"role": "developer", "content": self.get_system_prompt()}
+        capabilities_message = {"role": "developer", "content": capabilities}
 
         response = await self._model_provider.generate(
-            messages=[system_message] + messages, tools=tools, stream=True
+            messages=[system_message, capabilities_message] + messages,
+            tools=tools,
+            stream=True,
         )
         async for chunk in response:
             yield chunk

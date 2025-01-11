@@ -52,8 +52,22 @@ class WalletAgent(BaseAgent):
         )
 
     def get_system_prompt(self) -> str | None:
-        return """You are a wallet agent that can perform operations on a wallet.
-        You must use the tools provided when responding."""
+        return f"""You are a wallet agent that can perform various onchain operations.
+        You must use the tools provided when responding. If you can't perform the operation,
+        you must say so.
+        Your wallet address is: {self._wallet._wallet_address}
+        
+        Your capabilities are:
+        {self.get_capabilities()}
+        """
+
+    def get_capabilities(self) -> str:
+        return """
+        Onchain operations:
+        - Get the balance of the ETH in your wallet.
+        - Transfer tokens to a specified address.
+        - Swap one token for another.
+        """
 
     async def transfer_to(self) -> "BaseAgent":
         """Transfer control to the wallet agent for handling wallet operations

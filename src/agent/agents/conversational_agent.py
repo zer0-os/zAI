@@ -69,3 +69,8 @@ class ConversationalAgent(BaseAgent):
 
     def get_system_prompt(self) -> str | None:
         return self._system_prompt
+
+    def get_capabilities(self) -> str:
+        return """
+        Casual conversation
+        """
