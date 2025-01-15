@@ -4,7 +4,7 @@ import tracemalloc
 from typing import Optional
 from google.oauth2 import id_token
 from google.auth.transport import requests
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.websockets import WebSocketState
 from agent.agents.conversational_agent import ConversationalAgent
 from agent.agents.intro_agent import IntroAgent
@@ -26,6 +26,8 @@ import aiohttp
 from db.agent_repository import AgentRepository
 from db.connection import DatabaseConnection
 from contextlib import asynccontextmanager
+from utils.privy_auth import PrivyAuthorizationSigner
+from typing import Dict, Any
 
 # Load environment variables
 load_dotenv(override=True)
@@ -69,67 +71,8 @@ app = FastAPI(lifespan=lifespan)
 # Initialize connection manager
 connection_manager = ConnectionManager()
 
-
-@app.websocket("/intro-agent")
-async def websocket_endpoint(websocket: WebSocket):
-    # Get token from URL query parameters
-    token = websocket.query_params.get("access_token")
-    if not token:
-        await websocket.close(code=4001, reason="Missing access token")
-        return
-
-    user_info = await verify_access_token(token)
-    if not user_info:
-        await websocket.close(code=4001, reason="Invalid authentication token")
-        return
-
-    # Try to establish connection
-    if not await connection_manager.connect(websocket):
-        return
-
-    # Add user info to the websocket state
-    websocket.state.user = user_info
-
-    # Initialize components
-    stream = WebSocketStream(websocket)
-    message_manager = MessageManager()
-
-    intro_agent = IntroAgent(
-        message_manager=message_manager,
-        message_stream=stream,
-        user_id=user_info.get("id"),
-        debug=app.state.debug,
-    )
-
-    runtime = Runtime(
-        wallet=None,
-        message_stream=stream,
-        entry_agent=intro_agent,
-        agents=[intro_agent],
-        message_manager=message_manager,
-        debug=app.state.debug,
-    )
-
-    try:
-        while True:
-            message = await stream.receive_message()
-            await runtime.process_message(message)
-
-    except WebSocketDisconnect:
-        print("Client disconnected")
-    except Exception as e:
-        if websocket.client_state != WebSocketState.DISCONNECTED:
-            try:
-                await stream.send_message(f"Error: {str(e)}")
-            except:
-                pass
-    finally:
-        connection_manager.disconnect(websocket)
-        try:
-            if websocket.client_state != WebSocketState.DISCONNECTED:
-                await websocket.close()
-        except:
-            pass
+# Initialize Privy signer
+privy_signer = PrivyAuthorizationSigner()
 
 
 async def verify_access_token(token: str) -> Optional[dict]:
@@ -291,6 +234,25 @@ async def wallet_events_webhook(event: WebhookEvent):
         )
 
         return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/wallet/sign")
+async def sign_wallet_payload(request: Request) -> Dict[str, str]:
+    """
+    Sign a wallet payload using Privy authorization.
+
+    Args:
+        request: FastAPI request containing the payload to sign
+
+    Returns:
+        Dict containing the signature
+    """
+    try:
+        payload = await request.json()
+        signature = privy_signer.get_auth_signature(payload)
+        return {"signature": signature}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

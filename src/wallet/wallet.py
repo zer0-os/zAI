@@ -120,8 +120,7 @@ class ZWallet:
                 "gas_price": await self._web3.eth.gas_price,
             }
 
-        # Use Privy to sign and send the transaction
-        response = await self.sign_transaction_with_privy(tx)
+        response = await self.send_transaction(tx)
 
         tx_hash = response.get("data", {}).get("hash")
         if not tx_hash:
@@ -199,13 +198,11 @@ class ZWallet:
         if additional_body_params:
             body.update(additional_body_params)
 
-        headers = self._privy_signer.get_auth_headers(url=url, body=body, method="POST")
-        headers.update(
-            {
-                "Content-Type": "application/json",
-                "Authorization": f"Basic {basic_auth}",
-            }
+        headers = await self._privy_signer.get_auth_headers(
+            url=url, body=body, method="POST"
         )
+        headers["Content-Type"] = "application/json"
+        headers["Authorization"] = f"Basic {basic_auth}"
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=body, headers=headers) as response:

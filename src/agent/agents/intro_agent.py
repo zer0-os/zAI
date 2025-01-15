@@ -83,13 +83,9 @@ class IntroAgent(BaseAgent):
         basic_auth = base64.b64encode(auth_string.encode()).decode()
 
         # Get authorization headers
-        headers = privy_signer.get_auth_headers(url, body)
-        headers.update(
-            {
-                "Content-Type": "application/json",
-                "Authorization": f"Basic {basic_auth}",
-            }
-        )
+        headers = await privy_signer.get_auth_headers(url, body)
+        headers["Content-Type"] = "application/json"
+        headers["Authorization"] = f"Basic {basic_auth}"
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
