@@ -141,6 +141,7 @@ class Runtime(ABC):
             try:
                 async for chunk in self._current_agent.generate(self._capabilities):
                     if chunk == "stop":
+                        self._debug_log("Generation complete")
                         status = "complete"
                         break
 
@@ -174,14 +175,11 @@ class Runtime(ABC):
                                 self._debug_log(
                                     "Switching to new agent, resetting generation count"
                                 )
-                                tool_result = ""
+                                self._message_manager.remove_last_tool_call_message()
                             else:
-                                tool_result = result["result"]
-
-                            # Add successful result to message history
-                            self._message_manager.add_message(
-                                tool_result, "tool", tool_id=tool_call["id"]
-                            )
+                                self._message_manager.add_message(
+                                    result["result"], "tool", tool_id=tool_call["id"]
+                                )
 
             except Exception as e:
                 self._debug_log("Generation failed", str(e))
